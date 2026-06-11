@@ -594,18 +594,18 @@ async def market_loop(
                     live_tracker[symbol].update({
                         "price": s.mark_price,
                         "rsi": df['rsi'].iloc[-1] if not df.empty and 'rsi' in df.columns else 0.0,
-                        "pnl": position.unrealized_pnl if position_manager.has_open_position(symbol) else 0.0,
+                        "pnl": position_manager.get_open_position(symbol).unrealized_pnl if position_manager.has_open_position(symbol) else 0.0,
                         "events": s.events_count,
-                        "cluster_vol": cluster_aggregator.get_latest_cluster_volume(symbol),
-                        "active_bins": cluster_aggregator.get_active_bin_count(symbol),
-                        "status": s.current_status,
+                        "cluster_vol": sum(c['volume'] for c in cluster_snapshot.get('clusters', [])),
+                        "active_bins": len(cluster_snapshot.get('clusters', [])),
+                        "status": s.status,
                         "notes": s.notes,
                         "signal": s.last_signal_type,
                         "confidence": s.last_signal_confidence,
                         "reason": s.last_signal_reason,
-                        "guard_triggered_count": status_tracker.status[symbol].guard_metrics.trades_blocked_count,
-                        "guard_trades_blocked_count": status_tracker.status[symbol].guard_metrics.trades_blocked_count,
-                        "guard_last_reason": status_tracker.status[symbol].guard_metrics.last_guard_reason
+                        "guard_triggered_count": s.guard_metrics.trades_blocked_count,
+                        "guard_trades_blocked_count": s.guard_metrics.trades_blocked_count,
+                        "guard_last_reason": s.guard_metrics.last_guard_reason
                     })
 
             except asyncio.CancelledError:
