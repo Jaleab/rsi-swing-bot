@@ -230,7 +230,8 @@ async def _update_and_manage_position(
     status_tracker: StatusTracker,
     signal_generator: SignalGenerator,
     signal_stats_tracker: Dict[str, SignalStatsTracker],
-    signal_quality_tracker: Optional[SignalQualityTracker] = None, # New parameter
+    signal_quality_tracker: Optional[SignalQualityTracker] = None,
+    metrics_exporter_obj: Optional[MetricsExporter] = None,
 ):
     s = status_tracker.status[symbol]
     
@@ -409,7 +410,7 @@ async def market_loop(
 
                 # --- Step 1: Update and Manage Existing Positions ---
                 # In simulation, this will trigger PaperTrader logic
-                await _update_and_manage_position(symbol, exchange_client, position_manager, status_tracker, signal_generators[symbol], signal_stats_trackers[symbol], signal_quality_tracker)
+                await _update_and_manage_position(symbol, exchange_client, position_manager, status_tracker, signal_generators[symbol], signal_stats_trackers[symbol], signal_quality_tracker, metrics_exporter_obj)
 
                 # --- Step 2: Fetch/Update OHLCV data ---
                 # In simulation, OHLCV data is generated or provided deterministically
