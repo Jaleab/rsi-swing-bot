@@ -72,6 +72,9 @@ class MockExchangeClient(AbstractExchangeClient):
             'volume': [1000.0 + i for i in range(limit)],
         })
 
+    async def execute_order(self, *args, **kwargs):
+        return {}
+
 
 # Mock MetricsExporter
 class MockMetricsExporter:
@@ -280,7 +283,7 @@ async def test_trade_cooldown_guard(mock_status_tracker):
     # 2. Close the first position immediately
     open_position = position_manager.get_open_position(symbol)
     if open_position:
-        open_position.close_position(close_reason="TEST_CLOSE")
+        open_position.close_position(closing_price=current_price, closing_timestamp=time.time(), close_reason="TEST_CLOSE")
         position_manager.remove_position(symbol)
     
     assert not position_manager.has_open_position(symbol)

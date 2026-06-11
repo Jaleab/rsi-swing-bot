@@ -91,19 +91,19 @@ class SimEventsGenerator:
     #     start_time_real = time.monotonic()
     #     start_time_sim = self.events[0].timestamp
 
-        while self.events:
-            event = self.events.popleft()
-            
-            sim_elapsed = (event.timestamp - start_time_sim) / 1000.0
-            real_elapsed_target = sim_elapsed / speed_factor
-            wait_time = real_elapsed_target - (time.monotonic() - start_time_real)
-            if wait_time > 0:
-                await asyncio.sleep(wait_time)
-            
-            await self.event_queue.put(event)
-            logger.debug(f"Replayed event: {event.symbol} @ {event.price} ({event.side})")
-        
-        logger.info("Finished replaying historical events.")
+    #     while self.events:
+    #         event = self.events.popleft()
+    #         
+    #         sim_elapsed = (event.timestamp - start_time_sim) / 1000.0
+    #         real_elapsed_target = sim_elapsed / speed_factor
+    #         wait_time = real_elapsed_target - (time.monotonic() - start_time_real)
+    #         if wait_time > 0:
+    #             await asyncio.sleep(wait_time)
+    #         
+    #         await self.event_queue.put(event)
+    #         logger.debug(f"Replayed event: {event.symbol} @ {event.price} ({event.side})")
+    #     
+    #     logger.info("Finished replaying historical events.")
 
     async def _generate_single_event(self, symbol: str, timestamp: int):
         """Generates a single synthetic liquidation event for a given symbol."""

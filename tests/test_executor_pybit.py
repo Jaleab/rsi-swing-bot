@@ -51,7 +51,7 @@ async def test_fetch_ohlcv_and_parse(mock_session):
 async def test_place_order_happy_path(mock_session):
     # Mock dependencies
     mock_position_manager = AsyncMock(spec=executor.PositionManager)
-    mock_metrics_exporter = MagicMock(spec=executor.metrics_exporter)
+    mock_metrics_exporter = MagicMock(spec=executor.MetricsExporter)
     mock_signal_stats_tracker = MagicMock()
 
     # Configure the mock open_position to call exchange_client.place_order

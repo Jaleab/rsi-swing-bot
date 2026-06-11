@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from collections import deque
 import time # Import time module
 import json # Import json module
@@ -48,7 +48,8 @@ def mock_status_tracker(mock_config): # Inject mock_config
 
 @pytest.fixture
 def sim_generator(mock_event_queue, mock_order_book_queue, mock_trade_stream_queue, mock_config, mock_status_tracker):
-    return SimEventsGenerator(mock_event_queue, mock_config, mock_status_tracker)
+    mock_exchange = MagicMock()
+    return SimEventsGenerator(mock_config, mock_config.SYMBOLS, timeframe="1m", ohlcv_limit=200, exchange_client=mock_exchange, status_tracker=mock_status_tracker, random_seed=42)
 
 @pytest.fixture
 def cluster_aggregator(mock_config, mock_status_tracker, mock_event_queue):
@@ -158,7 +159,7 @@ async def test_historical_event_replay(sim_generator: SimEventsGenerator, cluste
         json.dump(historical_data, f)
     
     await sim_generator.load_historical_events(file_path)
-    assert len(sim_generator.events) == 3
+    assert len(sim_generator.all_generated_events) == 3
 
     # Ingest historical events directly
     for event_data in historical_data:

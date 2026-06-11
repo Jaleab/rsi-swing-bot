@@ -17,30 +17,32 @@ def signal_generator_instance():
     temp_config.RSI_OVERBOUGHT = 80 # More lenient for testing crossovers
     temp_config.STOP_LOSS_PERCENT = 0.01
     temp_config.TAKE_PROFIT_PERCENT = 0.02
-    temp_config.W_RSI = 0.5
-    temp_config.W_CLUSTER = 0.3
-    temp_config.W_SWEEP = 0.15
-    temp_config.W_PROX = 0.05 # Not used yet, but for completeness
-    temp_config.W_DOMINANCE = 0.10 # New weight for cluster dominance
+    temp_config.W_RSI = 0.455
+    temp_config.W_CLUSTER = 0.273
+    temp_config.W_SWEEP = 0.136
+    temp_config.W_PROX = 0.045 # Not used yet, but for completeness
+    temp_config.W_DOMINANCE = 0.091 # New weight for cluster dominance
     temp_config.CONFIDENCE_HIGH_THRESHOLD = 0.75
     temp_config.PROXIMITY_DECAY_FACTOR = 0.5 # Adjusted to ensure a high proximity score for tests
     temp_config.W_PROX_CLUSTER_MULTIPLIER = 1.0 # Ensure full impact of proximity and normalized strength
     temp_config.W_SWEEP_MULTIPLIER = 0.5
+    temp_config.MIN_SWEEP_VOLUME_USDT = 1.0  # Positive threshold so zero net sweep does not activate
+    temp_config.ENABLE_REGIME_FILTER = False  # Disable to avoid ADX interfering with test OHLCV data
     mock_cluster_aggregator = MagicMock()
     return SignalGenerator(temp_config, mock_cluster_aggregator)
 
 
 @pytest.mark.parametrize("rsi_signal_direction, current_price, cluster_normalized_strength, sweep_volume, expected_confidence_score, expected_signal_type, expected_reason_fragment, expected_cluster_impact_score_min", [
     # Case 1: RSI LONG, no sweep, dominant cluster -> MEDIUM_LONG
-    ("LONG", 100.0, 1.0, 0.0, 0.94, "MEDIUM_LONG", "MEDIUM_LONG (RSI + Dominant Cluster)", 0.9),
+    ("LONG", 100.0, 1.0, 0.0, 0.85, "MEDIUM_LONG", "MEDIUM_LONG (RSI + Dominant Cluster)", 0.9),
     # Case 2: RSI LONG, bullish sweep, dominant cluster -> STRONG_LONG
-    ("LONG", 100.0, 1.0, 50.0, 1.0, "STRONG_LONG", "STRONG_LONG (RSI + Sweep + Dominant Cluster)", 0.9),
+    ("LONG", 100.0, 1.0, 50.0, 0.99, "STRONG_LONG", "STRONG_LONG (RSI + Bullish Sweep + Dominant Cluster)", 0.9),
     # Case 3: RSI SHORT, no sweep, dominant cluster -> MEDIUM_SHORT
-    ("SHORT", 100.0, 1.0, 0.0, 0.94, "MEDIUM_SHORT", "MEDIUM_SHORT (RSI + Dominant Cluster)", 0.9),
+    ("SHORT", 100.0, 1.0, 0.0, 0.85, "MEDIUM_SHORT", "MEDIUM_SHORT (RSI + Dominant Cluster)", 0.9),
     # Case 4: RSI LONG, no sweep, medium cluster impact -> LOW_CONFIDENCE_LONG
-    ("LONG", 100.0, 0.2, 0.0, 0.77, "LOW_CONFIDENCE_LONG", "LOW_CONFIDENCE_LONG (RSI Only)", 0.41), # Corrected expected_cluster_impact_score_min
+    ("LONG", 100.0, 0.2, 0.0, 0.70, "LOW_CONFIDENCE_LONG", "LOW_CONFIDENCE_LONG (RSI Only)", 0.41),
     # Case 5: NEUTRAL RSI, no cluster/sweep -> NEUTRAL
-    ("NEUTRAL", 100.0, 0.0, 0.0, 0.226, "NEUTRAL", "NEUTRAL (RSI Neutral)", 0.0), # Corrected expected_confidence_score
+    ("NEUTRAL", 100.0, 0.0, 0.0, 0.21, "NEUTRAL", "NEUTRAL (RSI Neutral)", 0.0),
 ])
 
 def test_decide_signals(signal_generator_instance, rsi_signal_direction, current_price, cluster_normalized_strength, sweep_volume, expected_confidence_score, expected_signal_type, expected_reason_fragment, expected_cluster_impact_score_min):
@@ -56,9 +58,9 @@ def test_decide_signals(signal_generator_instance, rsi_signal_direction, current
     # Create a dummy DataFrame and directly set RSI values for precise testing
     ohlcv_df = pd.DataFrame({'close': [100.0] * 100}) # Need enough data for RSI calculation
     if rsi_signal_direction == "LONG":
-        ohlcv_df['close'].iloc[-1] = 1.0 # Make RSI strongly oversold
+        ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 1.0 # Make RSI strongly oversold
     elif rsi_signal_direction == "SHORT":
-        ohlcv_df['close'].iloc[-1] = 1000.0 # Make RSI strongly overbought
+        ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 1000.0 # Make RSI strongly overbought
     # No change for NEUTRAL, RSI will be around 50
 
     # Ensure RSI calculation works for the mock data
@@ -112,7 +114,7 @@ def test_decide_fallback_rsi(signal_generator_instance):
     current_price = 100.0
     # Create a dummy DataFrame and directly set RSI values for a buy signal
     ohlcv_df = pd.DataFrame({'close': [100.0] * 100}) # Need enough data for RSI calculation
-    ohlcv_df['close'].iloc[-1] = 1.0 # Make RSI strongly oversold
+    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 1.0 # Make RSI strongly oversold
     
     # Ensure RSI calculation works for the mock data
     ohlcv_df['rsi'] = ta.momentum.RSIIndicator(ohlcv_df['close'], window=signal_generator_instance.config.RSI_LENGTH).rsi()
