@@ -11,5 +11,3 @@ tabulate
 rich
 prometheus_client>=0.20.0
 sortedcontainers
-aiodns==3.0.0 # Added for compatibility with aiohttp
-pycares==4.3.0 # Added for compatibility with aiodns
