@@ -7,7 +7,7 @@ class Config:
     # Semicolon-delimited trading pairs from BYBIT_SYMBOLS env var. Example: "SOL/USDT;BTC/USDT"
     SYMBOLS: List[str] = os.environ.get("BYBIT_SYMBOLS", "SOL/USDT;BTC/USDT").split(';')
     TIMEFRAME: str = "5m"         # 5m minimum for RSI swing signals (was 1m)
-    SIM_MODE: bool = False # Default to False, will be overridden by argparse in executor_bot.py
+    SIM_MODE: bool = os.environ.get("SIM_MODE", "False").lower() == "true"  # Overridden by --sim flag
     LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "DEBUG")          # Default logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
     # --- API and Exchange Parameters ---
@@ -20,25 +20,22 @@ class Config:
 
     # --- Trading Strategy Parameters ---
     # Position Sizing (Quarter-Kelly fractional risk framework)
-    POSITION_USDT: float = 10.0      # Fallback fixed position size in USDT (used only if ENABLE_RISK_SIZING=False)
-    ENABLE_RISK_SIZING: bool = True  # Use risk-based sizing instead of fixed USDT
-    LEVERAGE: int = 1                # Leverage: 1=spot, 2-3x for mild margin use
-    MAX_LEVERAGE: int = 3            # Maximum allowed leverage
-    RISK_PER_TRADE_PCT: float = 0.016  # Risk 1.6% of equity per trade (Quarter-Kelly prior)
-    MAX_RISK_PER_TRADE_PCT: float = 0.03  # Cap risk at 3% regardless of Kelly
-    MAX_POSITION_PCT: float = 0.25   # Max 25% of account in one position (notional)
-    MIN_POSITION_SIZE_USDT: float = 1.0 # Minimum position size in USDT
-    ENABLE_VOLATILITY_SCALING: bool = True  # Scale size inversely by ATR
-    ATR_PERIOD: int = 14             # ATR lookback period for volatility scaling
-    VOLATILITY_TARGET_PCT: float = 0.02  # Target 2% daily volatility
+    POSITION_USDT: float = float(os.environ.get("POSITION_USDT", "10.0"))
+    ENABLE_RISK_SIZING: bool = os.environ.get("ENABLE_RISK_SIZING", "True").lower() == "true"
+    LEVERAGE: int = int(os.environ.get("LEVERAGE", "1"))
+    RISK_PER_TRADE_PCT: float = float(os.environ.get("RISK_PER_TRADE_PCT", "0.016"))
+    MAX_RISK_PER_TRADE_PCT: float = float(os.environ.get("MAX_RISK_PER_TRADE_PCT", "0.03"))
+    MAX_POSITION_PCT: float = float(os.environ.get("MAX_POSITION_PCT", "0.25"))
+    MIN_POSITION_SIZE_USDT: float = float(os.environ.get("MIN_POSITION_SIZE_USDT", "1.0"))
+    ENABLE_VOLATILITY_SCALING: bool = os.environ.get("ENABLE_VOLATILITY_SCALING", "True").lower() == "true"
+    VOLATILITY_TARGET_PCT: float = float(os.environ.get("VOLATILITY_TARGET_PCT", "0.02"))
 
     # Circuit Breakers
-    ENABLE_DRAWDOWN_BREAKER: bool = True   # Halt trading if drawdown exceeds limit
-    MAX_DRAWDOWN_PCT: float = 0.20         # 20% max drawdown before circuit breaker
-    ENABLE_EQUITY_CURVE_FILTER: bool = True  # Only trade above equity SMA
-    EQUITY_SMA_PERIOD: int = 20            # Equity curve SMA lookback
+    ENABLE_DRAWDOWN_BREAKER: bool = os.environ.get("ENABLE_DRAWDOWN_BREAKER", "True").lower() == "true"
+    MAX_DRAWDOWN_PCT: float = float(os.environ.get("MAX_DRAWDOWN_PCT", "0.20"))
+    ENABLE_EQUITY_CURVE_FILTER: bool = os.environ.get("ENABLE_EQUITY_CURVE_FILTER", "True").lower() == "true"
 
-    MAX_TOTAL_OPEN_POSITIONS: int = 1 # Maximum number of concurrent open positions across all symbols
+    MAX_TOTAL_OPEN_POSITIONS: int = 1
 # NOTE:
 # PositionManager currently supports only ONE open position per symbol.
 # MAX_POSITIONS_PER_SYMBOL must remain 1 until PositionManager is refactored for multi-position per symbol.
@@ -46,10 +43,10 @@ class Config:
     RISK_PER_TRADE_PERCENT: float = 0.005 # Risk per trade as a percentage of account balance
 
     # RSI Parameters (aligned with Pine Script prototype and industry standard)
-    RSI_LENGTH: int = 14
-    RSI_OVERSOLD: int = 30
-    RSI_OVERBOUGHT: int = 70
-    ENABLE_RSI_EXIT: bool = True  # Enable RSI reversal exit logic
+    RSI_LENGTH: int = int(os.environ.get("RSI_LENGTH", "14"))
+    RSI_OVERSOLD: int = int(os.environ.get("RSI_OVERSOLD", "30"))
+    RSI_OVERBOUGHT: int = int(os.environ.get("RSI_OVERBOUGHT", "70"))
+    ENABLE_RSI_EXIT: bool = os.environ.get("ENABLE_RSI_EXIT", "True").lower() == "true"
 
     # --- Regime Detection ---
     ENABLE_REGIME_FILTER: bool = True
