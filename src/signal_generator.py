@@ -17,6 +17,28 @@ class SignalGenerator:
         self.CONFIDENCE_HIGH_THRESHOLD = 0.75
         self.CONFIDENCE_MEDIUM_THRESHOLD = 0.5
 
+    def _calculate_adx(self, ohlcv_df: pd.DataFrame, length: int = 14) -> float:
+        """Calculate ADX from OHLCV data. Returns latest ADX value."""
+        if ohlcv_df is None or ohlcv_df.empty or 'high' not in ohlcv_df.columns:
+            return 25.0
+        high = ohlcv_df['high']
+        low = ohlcv_df['low']
+        close = ohlcv_df['close']
+        plus_dm = high.diff().clip(lower=0)
+        minus_dm = low.diff().mul(-1).clip(lower=0)
+        plus_dm = plus_dm.where(plus_dm > minus_dm, 0.0)
+        minus_dm = minus_dm.where(minus_dm > plus_dm, 0.0)
+        tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
+        atr = tr.ewm(com=length - 1, min_periods=length).mean()
+        plus_di = 100 * (plus_dm.ewm(com=length - 1, min_periods=length).mean() / atr)
+        minus_di = 100 * (minus_dm.ewm(com=length - 1, min_periods=length).mean() / atr)
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+        adx = dx.ewm(com=length - 1, min_periods=length).mean()
+        result = adx.iloc[-1]
+        if pd.isna(result):
+            return 25.0
+        return float(result)
+
     def _calculate_cluster_impact_score(
         self,
         symbol: str,
@@ -112,6 +134,26 @@ class SignalGenerator:
         )
         logging.debug(f"[{symbol}] RSI Value: {rsi_value:.2f}, Signal: {rsi_signal}, Score: {rsi_score:.2f}")
         decision_reasons.append(f"RSI Value: {rsi_value:.2f}, Signal: {rsi_signal}, Score: {rsi_score:.2f}")
+
+        # --- Regime Filter (ADX) ---
+        if Config.ENABLE_REGIME_FILTER and rsi_signal != "NEUTRAL":
+            adx_value = self._calculate_adx(ohlcv_df, Config.ADX_LENGTH)
+            if Config.REGIME_FILTER_MODE == "RANGING_ONLY" and adx_value > Config.ADX_THRESHOLD:
+                return {
+                    "signal_type": "NEUTRAL",
+                    "confidence_score": 0.0,
+                    "rsi_value": rsi_value,
+                    "rsi_signal": rsi_signal,
+                    "rsi_score": rsi_score,
+                    "cluster_impact_score": 0.0,
+                    "proximity_score": 0.0,
+                    "cluster_dominance_score": 0.0,
+                    "is_sweep": False,
+                    "bullish_sweep_volume": 0.0,
+                    "bearish_sweep_volume": 0.0,
+                    "reason": f"REGIME_FILTER: ADX={adx_value:.1f} > {Config.ADX_THRESHOLD} (trending, suppressing mean-reversion)"
+                }
+            logging.debug(f"[{symbol}] ADX={adx_value:.1f}, regime={'ranging' if adx_value <= Config.ADX_THRESHOLD else 'trending'}")
         
         # --- 2. Cluster Impact, Proximity, and Dominance Scores ---
         cluster_impact_score, proximity_score = 0.0, 0.0

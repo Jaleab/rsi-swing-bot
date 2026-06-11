@@ -709,7 +709,7 @@ async def main():
             api_secret=Config.BYBIT_API_SECRET, 
             testnet=Config.BYBIT_TESTNET,
             # Pass pre-configured symbols to the exchange client
-            symbols=Config.DEFAULT_SYMBOLS_RSI_SWING_BOT 
+            symbols=Config.SYMBOLS 
         )
 
     # 6. Initialize PositionManager instances and populate the dictionary
@@ -739,7 +739,7 @@ async def main():
     if Config.SIM_MODE:
         sim_events_generator = SimEventsGenerator(
             Config, # Pass the Config object
-            Config.DEFAULT_SYMBOLS_RSI_SWING_BOT,
+            Config.SYMBOLS,
             Config.TIMEFRAME,
             Config.OHLCV_LIMIT,
             exchange_client, # Pass PaperTrader as exchange client for sim events

@@ -52,6 +52,15 @@ class PositionManager:
         else:
             logging.info("Running in SIM_MODE, no real positions to fetch.")
 
+    def _apply_precision(self, quantity: float, symbol: str) -> float:
+        """Round quantity to exchange step size for the given symbol."""
+        PRECISION_MAP = {
+            "BTC/USDT": 6, "ETH/USDT": 5, "SOL/USDT": 1,
+            "DOGE/USDT": 0, "XRP/USDT": 1,
+        }
+        decimals = PRECISION_MAP.get(symbol, 4)
+        return round(quantity, decimals)
+
     async def determine_position_size(self, symbol: str, current_price: float) -> float:
         """
         Determines the optimal position size in base currency (e.g., BTC for BTC/USDT)
@@ -99,6 +108,7 @@ class PositionManager:
 
         # Convert USDT amount to base currency quantity
         quantity = usdt_to_invest / current_price
+        quantity = self._apply_precision(quantity, symbol)
         logging.info(f"[{symbol}] Determined position size: {quantity:.6f} (Base Currency) for {usdt_to_invest:.2f} USDT.")
         return quantity
 

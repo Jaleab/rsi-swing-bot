@@ -3,11 +3,10 @@ import os # Import os for environment variables
 
 class Config:
     # --- General Settings ---
-    EXCHANGE_NAME: str = "bybit" # Name of the exchange to use (e.g., "bybit", "binance")
-    # Load symbols from environment variable, default to SOL/USDT if not set
-    SYMBOLS: List[str] = os.environ.get("BYBIT_SYMBOLS", "SOL/USDT").split(';')
-    DEFAULT_SYMBOLS_RSI_SWING_BOT: List[str] = ["BTC/USDT", "ETH/USDT"] # Define default symbols for RSI Swing Bot
-    TIMEFRAME: str = "1m"
+    EXCHANGE_NAME: str = "bybit"
+    # Semicolon-delimited trading pairs from BYBIT_SYMBOLS env var. Example: "SOL/USDT;BTC/USDT"
+    SYMBOLS: List[str] = os.environ.get("BYBIT_SYMBOLS", "SOL/USDT;BTC/USDT").split(';')
+    TIMEFRAME: str = "5m"         # 5m minimum for RSI swing signals (was 1m)
     SIM_MODE: bool = False # Default to False, will be overridden by argparse in executor_bot.py
     LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "DEBUG")          # Default logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 
@@ -34,6 +33,12 @@ class Config:
     RSI_OVERSOLD: int = 30
     RSI_OVERBOUGHT: int = 70
     ENABLE_RSI_EXIT: bool = True  # Enable RSI reversal exit logic
+
+    # --- Regime Detection ---
+    ENABLE_REGIME_FILTER: bool = True
+    ADX_LENGTH: int = 14
+    ADX_THRESHOLD: int = 25       # Below 25 = ranging (good for RSI), above 25 = trending
+    REGIME_FILTER_MODE: str = "RANGING_ONLY"  # "RANGING_ONLY" or "ALL"
     TIMEFRAME: str = "5m"         # 5m minimum for RSI swing signals (was 1m)
 
     # Cluster Parameters
