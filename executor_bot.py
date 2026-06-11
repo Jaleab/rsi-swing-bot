@@ -338,8 +338,9 @@ async def market_loop(
     logger.info("Market loop started.")
     print("DEBUG: Market loop started (print statement).") # Added print
 
-    # Initialize ohlcv_dataframes outside the loop
+    # Initialize ohlcv_dataframes and throttling outside the loop
     ohlcv_dataframes: Dict[str, pd.DataFrame] = {}
+    last_ohlcv_update: Dict[str, float] = {}
 
     # Event processing loop
     if sim_events: # Simulation mode
@@ -412,23 +413,20 @@ async def market_loop(
                 # In simulation, this will trigger PaperTrader logic
                 await _update_and_manage_position(symbol, exchange_client, position_manager, status_tracker, signal_generators[symbol], signal_stats_trackers[symbol], signal_quality_tracker, metrics_exporter_obj)
 
-                # --- Step 2: Fetch/Update OHLCV data ---
-                # In simulation, OHLCV data is generated or provided deterministically
-                latest_ohlcv_df = pd.DataFrame() # Initialize to empty DataFrame
-                # In an event-driven loop, fetching OHLCV on every event might be too frequent.
-                # We need a strategy to update OHLCV at appropriate intervals or based on candle close events.
-                # A more robust solution would would involve a dedicated OHLCV candle builder from raw trades.
-                latest_ohlcv_df = await fetch_ohlcv(exchange_client, symbol, Config.TIMEFRAME, status_tracker, limit=Config.OHLCV_LIMIT) # Fetch enough candles for RSI
-                if not latest_ohlcv_df.empty:
-                    # Append to existing DataFrame and re-calculate RSI if needed
-                    # For simplicity, we'll replace the DataFrame for now.
-                    ohlcv_dataframes[symbol] = latest_ohlcv_df
-                    ohlcv_dataframes[symbol]['rsi'] = ta.momentum.RSIIndicator(ohlcv_dataframes[symbol]['close'], window=Config.RSI_LENGTH).rsi()
-                    ohlcv_dataframes[symbol].dropna(inplace=True)
-                    logger.debug(f"[{symbol}] OHLCV data updated and RSI recalculated. DataFrame empty after dropna: {ohlcv_dataframes[symbol].empty}")
-                    if ohlcv_dataframes[symbol].empty:
-                        logger.warning(f"[{symbol}] Initial RSI calculation resulted in empty DataFrame. Signal generation might be affected.")
-                
+                # --- Step 2: Fetch/Update OHLCV data (throttled) ---
+                latest_ohlcv_df = pd.DataFrame()
+                current_time = time.time()
+                if (symbol not in last_ohlcv_update or
+                    (current_time - last_ohlcv_update.get(symbol, 0)) >= Config.OHLCV_UPDATE_INTERVAL_S):
+                    latest_ohlcv_df = await fetch_ohlcv(exchange_client, symbol, Config.TIMEFRAME, status_tracker, limit=Config.OHLCV_LIMIT)
+                    if not latest_ohlcv_df.empty:
+                        ohlcv_dataframes[symbol] = latest_ohlcv_df
+                        ohlcv_dataframes[symbol]['rsi'] = ta.momentum.RSIIndicator(ohlcv_dataframes[symbol]['close'], window=Config.RSI_LENGTH).rsi()
+                        ohlcv_dataframes[symbol].dropna(inplace=True)
+                        logger.debug(f"[{symbol}] OHLCV updated and RSI recalculated. Empty: {ohlcv_dataframes[symbol].empty}")
+                        if ohlcv_dataframes[symbol].empty:
+                            logger.warning(f"[{symbol}] RSI calc resulted in empty DataFrame.")
+                    last_ohlcv_update[symbol] = current_time
                 df = ohlcv_dataframes.get(symbol)
                 # Added debug logs for OHLCV DataFrame and current price before signal generation
                 logger.debug(f"[{symbol}] OHLCV DataFrame before signal generation (first 5 rows):\n{df.head().to_string() if df is not None else 'None'}")
@@ -597,7 +595,7 @@ async def market_loop(
                         "price": s.mark_price,
                         "rsi": df['rsi'].iloc[-1] if not df.empty and 'rsi' in df.columns else 0.0,
                         "pnl": position.unrealized_pnl if position_manager.has_open_position(symbol) else 0.0,
-                        "events": s.event_count,
+                        "events": s.events_count,
                         "cluster_vol": cluster_aggregator.get_latest_cluster_volume(symbol),
                         "active_bins": cluster_aggregator.get_active_bin_count(symbol),
                         "status": s.current_status,
