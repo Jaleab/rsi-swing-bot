@@ -19,8 +19,25 @@ class Config:
     RECV_WINDOW: int = 30000         # Bybit recvWindow for API requests (milliseconds)
 
     # --- Trading Strategy Parameters ---
-    POSITION_USDT: float = 10.0      # Default position size in USDT
+    # Position Sizing (Quarter-Kelly fractional risk framework)
+    POSITION_USDT: float = 10.0      # Fallback fixed position size in USDT (used only if ENABLE_RISK_SIZING=False)
+    ENABLE_RISK_SIZING: bool = True  # Use risk-based sizing instead of fixed USDT
+    LEVERAGE: int = 1                # Leverage: 1=spot, 2-3x for mild margin use
+    MAX_LEVERAGE: int = 3            # Maximum allowed leverage
+    RISK_PER_TRADE_PCT: float = 0.016  # Risk 1.6% of equity per trade (Quarter-Kelly prior)
+    MAX_RISK_PER_TRADE_PCT: float = 0.03  # Cap risk at 3% regardless of Kelly
+    MAX_POSITION_PCT: float = 0.25   # Max 25% of account in one position (notional)
     MIN_POSITION_SIZE_USDT: float = 1.0 # Minimum position size in USDT
+    ENABLE_VOLATILITY_SCALING: bool = True  # Scale size inversely by ATR
+    ATR_PERIOD: int = 14             # ATR lookback period for volatility scaling
+    VOLATILITY_TARGET_PCT: float = 0.02  # Target 2% daily volatility
+
+    # Circuit Breakers
+    ENABLE_DRAWDOWN_BREAKER: bool = True   # Halt trading if drawdown exceeds limit
+    MAX_DRAWDOWN_PCT: float = 0.20         # 20% max drawdown before circuit breaker
+    ENABLE_EQUITY_CURVE_FILTER: bool = True  # Only trade above equity SMA
+    EQUITY_SMA_PERIOD: int = 20            # Equity curve SMA lookback
+
     MAX_TOTAL_OPEN_POSITIONS: int = 1 # Maximum number of concurrent open positions across all symbols
 # NOTE:
 # PositionManager currently supports only ONE open position per symbol.

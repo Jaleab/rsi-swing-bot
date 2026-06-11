@@ -4,8 +4,9 @@ from datetime import datetime
 from src.config import Config
 from src.abstract_exchange import AbstractExchangeClient
 from src.position import Position
-from src.guards import GuardResult # Import GuardResult
-from src.metrics_exporter import MetricsExporter # Import MetricsExporter
+from src.guards import GuardResult
+from src.metrics_exporter import MetricsExporter
+from src.risk import PositionSizer, EquityTracker
 
 class PositionManager:
     """
@@ -16,9 +17,12 @@ class PositionManager:
         self.config = config
         self.exchange_client = exchange_client
         self.metrics_exporter = metrics_exporter_obj
-        self.status_tracker = status_tracker # Store the StatusTracker object
+        self.status_tracker = status_tracker
         self.current_positions: Dict[str, Position] = {}
-        logging.info("PositionManager initialized.")
+        self.sizer = PositionSizer(config)
+        self.equity_tracker = EquityTracker(config)
+        self.equity_tracker.initialize(1000.0)  # Will be updated once balance is known
+        logging.info("PositionManager initialized with risk-based sizing.")
 
     async def initialize(self):
         """
@@ -61,18 +65,43 @@ class PositionManager:
         decimals = PRECISION_MAP.get(symbol, 4)
         return round(quantity, decimals)
 
-    async def determine_position_size(self, symbol: str, current_price: float) -> float:
+    async def determine_position_size(self, symbol: str, current_price: float,
+                                      stop_price: Optional[float] = None,
+                                      atr: Optional[float] = None) -> float:
         """
-        Determines the optimal position size in base currency (e.g., BTC for BTC/USDT)
-        based on risk parameters and available balance.
+        Determines position size in base currency using risk-based or fixed sizing.
         """
         if self.config.SIM_MODE:
-            # In simulation, use a fixed USDT amount for simplicity or a simulated balance.
-            # For now, let's assume a fixed USDT amount for position sizing in simulation.
+            if self.config.ENABLE_RISK_SIZING and stop_price and stop_price > 0:
+                equity = self.equity_tracker.current_equity
+                return self.sizer.size_position(equity, current_price, stop_price, atr)
             usdt_to_invest = self.config.POSITION_USDT
             logging.debug(f"[{symbol}] Simulation mode: Fixed USDT investment of {usdt_to_invest}")
+            if usdt_to_invest < self.config.MIN_POSITION_SIZE_USDT:
+                return 0.0
+            quantity = usdt_to_invest / current_price
+            return self._apply_precision(quantity, symbol)
+        elif self.config.ENABLE_RISK_SIZING and stop_price and stop_price > 0:
+            try:
+                balance = await self.exchange_client.get_balance(currency='USDT')
+                available_usdt = balance.get('free', 0.0)
+                if available_usdt <= 0:
+                    logging.warning(f"[{symbol}] No available USDT balance to open a position.")
+                    return 0.0
+
+                self.equity_tracker.current_equity = available_usdt
+                units = self.sizer.size_position(available_usdt, current_price, stop_price, atr)
+                usdt_value = units * current_price
+                if usdt_value < self.config.MIN_POSITION_SIZE_USDT:
+                    logging.warning(f"[{symbol}] Risk-sized position {usdt_value:.2f} USDT below minimum")
+                    return 0.0
+                logging.info(f"[{symbol}] Risk-based size: {units:.6f} units ({usdt_value:.2f} USDT) "
+                             f"at {self.sizer.get_dynamic_risk_pct()*100:.1f}% risk")
+                return units
+            except Exception as e:
+                logging.error(f"[{symbol}] Error in risk-based sizing: {e}. Falling back.")
         else:
-            # Live mode: calculate based on available balance and risk per trade
+            # Live mode fixed USDT sizing (legacy)
             try:
                 balance = await self.exchange_client.get_balance(currency='USDT')
                 available_usdt = balance.get('free', 0.0)
@@ -81,36 +110,29 @@ class PositionManager:
                     return 0.0
 
                 if self.config.POSITION_USDT > 0:
-                    # Use fixed position size if configured
                     usdt_to_invest = min(self.config.POSITION_USDT, available_usdt)
                 else:
-                    # Calculate position size based on risk per trade
                     risk_amount_usdt = available_usdt * self.config.RISK_PER_TRADE_PERCENT
-                    # For now, a very simplified approach: assume stop loss is at MIN_STOP_LOSS_PERCENT
-                    # A more advanced PositionManager would take the signal's stop_price into account
                     if self.config.MIN_STOP_LOSS_PERCENT > 0:
-                        position_size_usdt = risk_amount_usdt / self.config.MIN_STOP_LOSS_PERCENT
-                        usdt_to_invest = min(position_size_usdt, available_usdt)
+                        usdt_to_invest = risk_amount_usdt / self.config.MIN_STOP_LOSS_PERCENT
                     else:
-                        usdt_to_invest = available_usdt * 0.1 # Fallback to 10% of available if no SL defined
+                        usdt_to_invest = available_usdt * 0.1
 
                 logging.info(f"[{symbol}] Live mode: Available USDT: {available_usdt:.2f}, "
                              f"Investing: {usdt_to_invest:.2f} USDT")
 
             except Exception as e:
                 logging.error(f"[{symbol}] Error determining position size: {e}. Using default.")
-                usdt_to_invest = self.config.DEFAULT_POSITION_SIZE_USDT # Fallback
+                usdt_to_invest = self.config.DEFAULT_POSITION_SIZE_USDT
 
-        if usdt_to_invest < self.config.MIN_POSITION_SIZE_USDT:
-            logging.warning(f"[{symbol}] Calculated position size {usdt_to_invest:.2f} USDT "
-                            f"is below minimum {self.config.MIN_POSITION_SIZE_USDT:.2f} USDT.")
-            return 0.0
+            if usdt_to_invest < self.config.MIN_POSITION_SIZE_USDT:
+                logging.warning(f"[{symbol}] Calculated position size {usdt_to_invest:.2f} USDT "
+                                f"is below minimum {self.config.MIN_POSITION_SIZE_USDT:.2f} USDT.")
+                return 0.0
 
-        # Convert USDT amount to base currency quantity
-        quantity = usdt_to_invest / current_price
-        quantity = self._apply_precision(quantity, symbol)
-        logging.info(f"[{symbol}] Determined position size: {quantity:.6f} (Base Currency) for {usdt_to_invest:.2f} USDT.")
-        return quantity
+            quantity = usdt_to_invest / current_price
+            quantity = self._apply_precision(quantity, symbol)
+            return quantity
 
     def calculate_dynamic_sl_tp(self,
                                 signal_price: float,
@@ -305,34 +327,22 @@ class PositionManager:
             return
 
         side = 'buy' if signal_direction == 'buy' else 'sell'
-        quantity = await self.determine_position_size(symbol, current_price)
-
-        if quantity == 0.0:
-            guard_result = GuardResult(allowed=False, reason="Position size calculated to be 0.", guard_name="ZERO_QUANTITY")
-            self.status_tracker.update_guard_metrics(symbol, guard_result)
-            self.status_tracker.update_status(symbol, notes=f"SKIPPED_TRADE ({guard_result.guard_name})")
-            return
 
         # Determine support and resistance from cluster_snapshot
         support_price = None
         resistance_price = None
-        if cluster_snapshot and cluster_snapshot["top_clusters"]:
-            # Simplified logic: use the centroid of the strongest cluster as a potential support/resistance
-            # More advanced logic might consider side-specific clusters or multiple clusters
-            # For a long, support is below current price, resistance above. For a short, vice-versa.
-            # Here we assume the top cluster is the most relevant, and its centroid acts as a pivot.
+        if cluster_snapshot and cluster_snapshot.get("top_clusters"):
             top_cluster = cluster_snapshot["top_clusters"][0]
-            if signal_direction == 'buy': # Long position
+            if signal_direction == 'buy':
                 if top_cluster["centroid_price"] < current_price:
                     support_price = top_cluster["centroid_price"]
                 else:
                     resistance_price = top_cluster["centroid_price"]
-            else: # Short position
+            else:
                 if top_cluster["centroid_price"] > current_price:
                     resistance_price = top_cluster["centroid_price"]
                 else:
                     support_price = top_cluster["centroid_price"]
-
 
         # Calculate dynamic SL/TP
         signal_dir_int = 1 if signal_direction == 'buy' else -1
@@ -344,6 +354,18 @@ class PositionManager:
         )
         calculated_stop_price = sl_tp_levels["stop_price"]
         calculated_target_price = sl_tp_levels["target_price"]
+
+        # Size position using stop distance
+        quantity = await self.determine_position_size(
+            symbol, current_price,
+            stop_price=calculated_stop_price
+        )
+
+        if quantity == 0.0:
+            guard_result = GuardResult(allowed=False, reason="Position size calculated to be 0.", guard_name="ZERO_QUANTITY")
+            self.status_tracker.update_guard_metrics(symbol, guard_result)
+            self.status_tracker.update_status(symbol, notes=f"SKIPPED_TRADE ({guard_result.guard_name})")
+            return
 
         logging.info(f"[{symbol}] Calculated SL: {calculated_stop_price:.2f}, TP: {calculated_target_price:.2f}")
 
