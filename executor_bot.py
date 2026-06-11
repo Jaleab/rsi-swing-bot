@@ -374,7 +374,7 @@ async def market_loop(
             symbol = event.symbol # Define symbol here so it's available for error logging
             logger.debug(f"Received event in market loop: {type(event).__name__} for {symbol}")
             try: # Inner try for event processing
-                s = status_tracker.get_status(symbol)
+                s = status_tracker.status[symbol]
                 current_time_ms = event.timestamp
                 
                 # Process the event with the cluster aggregator
