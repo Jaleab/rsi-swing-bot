@@ -708,11 +708,10 @@ async def main():
         )
     else:
         exchange_client = BybitExchangeClient(
-            api_key=Config.BYBIT_API_KEY, 
-            api_secret=Config.BYBIT_API_SECRET, 
-            testnet=Config.BYBIT_TESTNET,
-            # Pass pre-configured symbols to the exchange client
-            symbols=Config.SYMBOLS 
+            api_key=Config.API_KEY, 
+            api_secret=Config.API_SECRET, 
+            testnet=Config.TESTNET,
+            metrics_exporter=metrics_exporter_instance
         )
 
     # 6. Initialize PositionManager instances and populate the dictionary
