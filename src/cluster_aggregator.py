@@ -336,6 +336,24 @@ class ClusterAggregator:
             await asyncio.sleep(self.config.CLUSTER_PERSISTENCE_INTERVAL_S)
             if self.config.PERSIST_CLUSTERS:
                 self._save_state()
+            for sym in list(self.bins.keys()):
+                health = self.check_cluster_health(sym)
+                if health["total_events"] == 0:
+                    logger.warning(f"[{sym}] No liquidation events in window — possible WS disconnect?")
+
+    def check_cluster_health(self, symbol: str) -> Dict:
+        """Returns cluster health summary for monitoring and WS disconnect detection."""
+        if symbol not in self.bins:
+            return {"symbol": symbol, "total_volume": 0, "total_events": 0, "active_bins": 0}
+        total_volume = sum(b["volume"] for b in self.bins[symbol].values())
+        total_events = sum(b["events"] for b in self.bins[symbol].values())
+        return {
+            "symbol": symbol,
+            "total_volume": total_volume,
+            "total_events": total_events,
+            "active_bins": len(self.bins[symbol]),
+            "timestamp": time.time()
+        }
 
     async def process_event(self, event: Any):
         """

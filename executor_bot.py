@@ -610,10 +610,13 @@ async def market_loop(
                     })
 
             except asyncio.CancelledError:
-                logger.info(f"[{symbol}] Event processing for {symbol} cancelled.")
-                raise # Re-raise to be caught by the outer try-finally
+                logger.info(f"[{symbol}] Event processing cancelled.")
+                raise
+            except (ValueError, KeyError, TypeError) as e:
+                logger.error(f"[{symbol}] Data error processing event: {e}", exc_info=True)
+                status_tracker.increment_error(symbol)
             except Exception as e:
-                logger.exception(f"[{symbol}] Error processing event for {symbol}: {e}")
+                logger.exception(f"[{symbol}] Unexpected error: {e}")
                 status_tracker.increment_error(symbol)
                 status_tracker.update_status(symbol, notes=f"ERROR: {str(e)}")
             

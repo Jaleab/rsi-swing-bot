@@ -14,6 +14,17 @@ BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear"
 BINANCE_WS_URL = "wss://fstream.binance.com/ws" # Placeholder for Binance
 
 class LiquidationEvent:
+    """
+    Represents a single liquidation event from an exchange.
+
+    side semantics:
+      - "LONG": A trader's LONG position was force-liquidated.
+        This means forced SELLING — bearish market pressure.
+        Maps to Bybit "Buy" liquidation event (buyer forced to close = sell).
+      - "SHORT": A trader's SHORT position was force-liquidated.
+        This means forced BUYING — bullish market pressure.
+        Maps to Bybit "Sell" liquidation event (seller forced to close = buy).
+    """
     def __init__(self, exchange, symbol, timestamp, price, qty, qty_usdt, side, order_id=None):
         self.exchange = exchange
         self.symbol = symbol
