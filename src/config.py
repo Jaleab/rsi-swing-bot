@@ -96,8 +96,8 @@ class Config:
     STATUS_SNAPSHOT_INTERVAL_S: int = 10 # How often to save status snapshot to CSV in seconds
 
     # --- WebSocket Settings ---
-    BYBIT_LIQUIDATION_WS_ENABLED: bool = True # Enable Bybit liquidation WebSocket
-    BINANCE_LIQUIDATION_WS_ENABLED: bool = False # Enable Binance liquidation WebSocket
+    BYBIT_LIQUIDATION_WS_ENABLED: bool = False # Not wired into EventStream yet
+    BINANCE_LIQUIDATION_WS_ENABLED: bool = False
     ORDERBOOK_WS_ENABLED: bool = True # Enable orderbook WebSocket
     TRADES_WS_ENABLED: bool = True # Enable trades WebSocket
     WS_RECEIVE_TIMEOUT_S: int = 30   # WebSocket receive timeout in seconds
