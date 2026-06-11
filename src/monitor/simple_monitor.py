@@ -24,21 +24,18 @@ class SimpleMonitor:
 
         if self.status_tracker and self.live_tracker:
             for symbol, data in self.status_tracker.status.items():
-                # Safely get data from status_tracker
                 price = data.mark_price if data.mark_price is not None else 0.0
                 rsi = data.rsi_value if data.rsi_value is not None else 0.0
                 signal = data.last_signal_type if data.last_signal_type else 'N/A'
-                errors = data.error_count
+                errors = data.consecutive_errors
 
-                # Get position info from position_manager
                 position = self.position_manager.get_open_position(symbol) if self.position_manager else None
                 pos_size = position.size if position else 0.0
                 pnl = position.unrealized_pnl if position else 0.0
 
-                # Get guard info from status_tracker
-                guards_triggered = data.guard_triggered_count
-                trades_blocked = data.guard_trades_blocked_count
-                last_guard_reason = data.guard_last_reason if data.guard_last_reason else 'N/A'
+                guards_triggered = len(data.guard_metrics.triggered_count)
+                trades_blocked = data.guard_metrics.trades_blocked_count
+                last_guard_reason = data.guard_metrics.last_guard_reason if data.guard_metrics.last_guard_reason else 'N/A'
                 
                 body += f"{symbol:<10} {price:<10.2f} {rsi:<8.2f} {signal:<12} {pos_size:<10.3f} {pnl:<10.2f} {errors:<6} {guards_triggered:<20} {str(trades_blocked):<16} {last_guard_reason:<30}\n"
                 total_pnl += pnl

@@ -604,9 +604,9 @@ async def market_loop(
                         "signal": s.last_signal_type,
                         "confidence": s.last_signal_confidence,
                         "reason": s.last_signal_reason,
-                        "guard_triggered_count": status_tracker.status[symbol].guard_triggered_count, # Corrected from hardcoded 0
-                        "guard_trades_blocked_count": status_tracker.status[symbol].guard_trades_blocked_count, # Corrected from hardcoded 0
-                        "guard_last_reason": status_tracker.status[symbol].guard_last_reason, # Corrected from hardcoded empty string
+                        "guard_triggered_count": status_tracker.status[symbol].guard_metrics.trades_blocked_count,
+                        "guard_trades_blocked_count": status_tracker.status[symbol].guard_metrics.trades_blocked_count,
+                        "guard_last_reason": status_tracker.status[symbol].guard_metrics.last_guard_reason
                     })
 
             except asyncio.CancelledError:
@@ -769,7 +769,7 @@ async def main():
 
     # Start the SimpleMonitor in a separate thread
     monitor = SimpleMonitor(status_tracker, position_manager, cluster_aggregator, live_tracker)
-    monitor_thread = Thread(target=monitor.run_monitor)
+    monitor_thread = Thread(target=monitor.run)
     monitor_thread.daemon = True
     monitor_thread.start()
 
