@@ -43,12 +43,12 @@ class Config:
     SWEEP_THRESHOLD_FACTOR: float = 2.0  # Sweep detection threshold vs average cluster volume
     MIN_SWEEP_VOLUME_USDT: float = 0.0  # Ensure sweeps have minimum economic size
 
-    # Confidence Weights
-    W_RSI: float = 0.50
-    W_CLUSTER: float = 0.30
-    W_SWEEP: float = 0.15
-    W_PROX: float = 0.05
-    W_DOMINANCE: float = 0.10 # Weight for cluster dominance in confidence score
+    # Confidence Weights (must sum to 1.0)
+    W_RSI: float = 0.455      # 0.50 / 1.10
+    W_CLUSTER: float = 0.273  # 0.30 / 1.10
+    W_SWEEP: float = 0.136    # 0.15 / 1.10
+    W_PROX: float = 0.045     # 0.05 / 1.10
+    W_DOMINANCE: float = 0.091 # 0.10 / 1.10
 
     TRADE_COOLDOWN_SECONDS: int = 60 # Cooldown period between trades for the same symbol in seconds
     SIGNAL_COOLDOWN_SECONDS: int = 5 # Cooldown period to ignore duplicate signals for the same symbol in seconds

@@ -12,9 +12,10 @@ class SignalGenerator:
     def __init__(self, config: Config, cluster_aggregator: ClusterAggregator):
         self.config = config
         self.cluster_aggregator = cluster_aggregator
-        # Define thresholds for confidence levels
-        self.CONFIDENCE_HIGH_THRESHOLD = 0.75 # As per blueprint (implied from table)
-        self.CONFIDENCE_MEDIUM_THRESHOLD = 0.5 # As per blueprint (implied from table)
+        weight_sum = config.W_RSI + config.W_CLUSTER + config.W_SWEEP + config.W_PROX + config.W_DOMINANCE
+        assert abs(weight_sum - 1.0) < 0.001, f"Signal weights must sum to 1.0, got {weight_sum:.4f}"
+        self.CONFIDENCE_HIGH_THRESHOLD = 0.75
+        self.CONFIDENCE_MEDIUM_THRESHOLD = 0.5
 
     def _calculate_cluster_impact_score(
         self,
