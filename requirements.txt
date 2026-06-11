@@ -1,12 +1,10 @@
 ccxt
 pandas
 ta
-matplotlib
 tqdm
 python-dotenv
 websockets
 psutil
-pybit
 tabulate
 rich
 prometheus_client>=0.20.0
