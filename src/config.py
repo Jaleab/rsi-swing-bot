@@ -48,7 +48,7 @@ class Config:
     SLIDING_WINDOW_S: int = 300      # Seconds to aggregate liquidations (e.g., 5 minutes)
     SWEEP_WINDOW_S: int = 30         # Shorter window for sweep detection (e.g., 30 seconds)
     SWEEP_THRESHOLD_FACTOR: float = 2.0  # Sweep detection threshold vs average cluster volume
-    MIN_SWEEP_VOLUME_USDT: float = 0.0  # Ensure sweeps have minimum economic size
+    MIN_SWEEP_VOLUME_USDT: float = 5000.0  # Minimum economic size for a sweep to matter
 
     # Confidence Weights (must sum to 1.0)
     W_RSI: float = 0.455      # 0.50 / 1.10

@@ -199,9 +199,14 @@ class BacktestEngine:
                         entry_price=current_position.entry_price,
                         source=f"{exit_reason} | gross={gross_pnl:.2f} fees={fees:.2f}"
                     )
-                
-                self.position_manager.remove_position(symbol)
-                current_position = None
+                    
+                    current_position.close_position(
+                        closing_price=exit_price,
+                        closing_timestamp=current_timestamp_ms,
+                        close_reason=exit_reason
+                    )
+                    self.position_manager.remove_position(symbol)
+                    current_position = None
             
             # Update unrealized PnL if in position
             if current_position:
