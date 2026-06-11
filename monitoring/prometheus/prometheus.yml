@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "bot_app" # Changed job name
+    metrics_path: "/metrics" # Explicitly define metrics path
+    static_configs:
+      - targets: ["bot:8000"]  # service name from docker-compose

@@ -1,0 +1,3 @@
+@echo off
+echo Streaming logs for rsi_swing_bot_container (Press Ctrl+C to stop streaming logs)...
+docker logs -f rsi_swing_bot_container

@@ -1,0 +1,245 @@
+import asyncio
+import websockets
+import json
+from collections import deque
+import time
+from typing import List # Import List
+
+# Assuming these are defined elsewhere or passed in config
+import logging
+from src.config import Config
+
+# Assuming these are defined elsewhere or passed in config
+BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear"
+BINANCE_WS_URL = "wss://fstream.binance.com/ws" # Placeholder for Binance
+
+class LiquidationEvent:
+    def __init__(self, exchange, symbol, timestamp, price, qty, qty_usdt, side, order_id=None):
+        self.exchange = exchange
+        self.symbol = symbol
+        self.timestamp = timestamp
+        self.price = price
+        self.qty = qty
+        self.qty_usdt = qty_usdt
+        self.side = side
+        self.order_id = order_id
+
+def subscribe_message_for_allLiquidation(symbols):
+    """Generates the subscription message for Bybit allLiquidation stream."""
+    # Bybit V5 public websocket for linear perpetuals
+    # Topic: liquidations.{symbol}
+    # Example: {"op":"subscribe","args":["liquidations.BTCUSDT"]}
+    args = [f"liquidations.{s.replace('/', '')}" for s in symbols]
+    return json.dumps({
+        "op": "subscribe",
+        "args": args
+    })
+
+def parse_bybit_msg(msg):
+    """Parses a raw Bybit WebSocket message."""
+    return json.loads(msg)
+
+def normalize_bybit_event(raw_event):
+    """Normalizes a raw Bybit liquidation event to the LiquidationEvent schema."""
+    # Example raw event structure (simplified):
+    # {
+    #     "topic": "liquidations.BTCUSDT",
+    #     "data": {
+    #         "symbol": "BTCUSDT",
+    #         "side": "Buy", # "Buy" for long liquidations, "Sell" for short liquidations
+    #         "price": "20000.0",
+    #         "qty": "0.01",
+    #         "time": 1678886400000,
+    #         "orderId": "..."
+    #     }
+    # }
+    data = raw_event.get("data", {})
+    symbol = data.get("symbol", "").replace('USDT', '/USDT') # Convert BTCUSDT to BTC/USDT
+    side = "LONG" if data.get("side") == "Buy" else "SHORT" # Bybit 'Buy' means long was liquidated
+    price = float(data.get("price", 0))
+    qty = float(data.get("qty", 0))
+    timestamp = data.get("time", 0) # Milliseconds
+    order_id = data.get("orderId")
+
+    qty_usdt = price * qty
+
+    return LiquidationEvent(
+        exchange="bybit",
+        symbol=symbol,
+        timestamp=timestamp,
+        price=price,
+        qty=qty,
+        qty_usdt=qty_usdt,
+        side=side,
+        order_id=order_id
+    )
+
+async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tracker): # Add status_tracker parameter
+    """
+    Connects to Bybit liquidation stream, normalizes events, and puts them into the queue.
+    Handles reconnects and deduplication.
+    """
+    deduplication_buffer = deque(maxlen=1000) # Store last 1000 order_ids for deduplication
+    reconnect_delay = 1
+    reconnect_attempts = 0
+
+    while True:
+        try:
+            async with websockets.connect(BYBIT_WS_URL) as ws:
+                logging.info(f"Bybit WebSocket connected. Subscribing to liquidations for {symbols}")
+                await ws.send(subscribe_message_for_allLiquidation(symbols))
+                reconnect_attempts = 0 # Reset attempts on successful connection
+
+                async for msg in ws:
+                    raw_event = parse_bybit_msg(msg)
+                    
+                    # Filter out non-data messages (e.g., subscription confirmations, heartbeats)
+                    if "data" not in raw_event or raw_event.get("op") == "pong":
+                        continue
+
+                    # Handle subscription confirmation
+                    if raw_event.get("op") == "subscribe" and raw_event.get("success") == True:
+                        logging.info(f"Bybit liquidation subscription confirmed: {raw_event}")
+                        continue
+
+                    normalized_event = normalize_bybit_event(raw_event)
+
+                    # Simple deduplication based on order_id and timestamp
+                    event_id = (normalized_event.order_id, normalized_event.timestamp)
+                    if event_id in deduplication_buffer:
+                        print(f"Duplicate event skipped: {event_id}")
+                        continue
+                    deduplication_buffer.append(event_id)
+
+                    await queue.put(normalized_event)
+                    # print(f"Put event to queue: {normalized_event.symbol} - {normalized_event.qty_usdt} USDT {normalized_event.side} at {normalized_event.price}")
+
+        except websockets.exceptions.ConnectionClosedOK:
+            logging.warning("Bybit WebSocket connection closed gracefully. Reconnecting...")
+        except websockets.exceptions.ConnectionClosedError as e:
+            logging.error(f"Bybit WebSocket connection closed with error: {e}. Reconnecting...", exc_info=True)
+            status_tracker.increment_error("GLOBAL_WEBSOCKET_BYBIT_LIQUIDATION") # Increment error counter
+        except Exception as e:
+            logging.critical(f"An unexpected error occurred in Bybit WebSocket consumer: {e}. Reconnecting...", exc_info=True)
+            status_tracker.increment_error("GLOBAL_WEBSOCKET_BYBIT_LIQUIDATION") # Increment error counter
+        
+        reconnect_attempts += 1
+        if reconnect_attempts > Config.MAX_RECONNECT_ATTEMPTS:
+            logging.critical(f"Bybit WebSocket consumer failed to reconnect after {Config.MAX_RECONNECT_ATTEMPTS} attempts. Exiting consumer.")
+            break # Exit the consumer loop
+        
+        await asyncio.sleep(reconnect_delay) # Wait before attempting to reconnect
+        reconnect_delay = min(reconnect_delay * 2, 60) # Exponential backoff, max 60 seconds
+
+def subscribe_message_binance_liquidation(symbols: List[str]):
+    """Generates the subscription message for Binance liquidation stream."""
+    # Binance liquidation stream for futures
+    # Topic: !forceOrder@arr
+    # Example: {"method": "SUBSCRIBE", "params": ["!forceOrder@arr"], "id": 1}
+    # Note: Binance sends all liquidation orders for all symbols on a single stream
+    return json.dumps({
+        "method": "SUBSCRIBE",
+        "params": ["!forceOrder@arr"],
+        "id": 1
+    })
+
+def normalize_binance_event(raw_event):
+    """Normalizes a raw Binance liquidation event to the LiquidationEvent schema."""
+    # Example raw event structure (simplified):
+    # {
+    #     "e": "forceOrder",        // Event Type
+    #     "E": 1678886400000,       // Event Time
+    #     "o": {
+    #         "s": "BTCUSDT",       // Symbol
+    #         "S": "BUY",           // Side
+    #         "q": "0.01",          // Original Quantity
+    #         "p": "20000.0",       // Average Price
+    #         "ap": "20000.0",      // Average Price
+    #         "X": "MARKET",        // Order Type
+    #         "l": "0.01",          // Last Filled Quantity
+    #         "z": "0.01",          // Accumulated Filled Quantity
+    #         "T": 1678886400000     // Trade Time
+    #     }
+    # }
+    data = raw_event.get("o", {})
+    symbol = data.get("s", "").replace('USDT', '/USDT') # Convert BTCUSDT to BTC/USDT
+    side = "LONG" if data.get("S") == "BUY" else "SHORT" # Binance 'BUY' means long was liquidated
+    price = float(data.get("ap", 0)) # Use average price
+    qty = float(data.get("q", 0))
+    timestamp = raw_event.get("o", {}).get("E", 0) # Event time in milliseconds, nested under 'o'
+    # Binance liquidation stream does not provide an order_id directly for the liquidation event itself.
+    # We can create a synthetic one or omit it if not strictly necessary for deduplication in this context.
+    # For now, we'll use a combination of timestamp, symbol, side, and price to create a pseudo-ID.
+    order_id = f"{timestamp}-{symbol}-{side}-{price}"
+
+    qty_usdt = price * qty
+
+    return LiquidationEvent(
+        exchange="binance",
+        symbol=symbol,
+        timestamp=timestamp,
+        price=price,
+        qty=qty,
+        qty_usdt=qty_usdt,
+        side=side,
+        order_id=order_id
+    )
+
+async def binance_ws_consumer(queue: asyncio.Queue, symbols: List[str]):
+    """
+    Connects to Binance liquidation stream, normalizes events, and puts them into the queue.
+    Handles reconnects and deduplication.
+    """
+    deduplication_buffer = deque(maxlen=1000) # Store last 1000 pseudo-order_ids for deduplication
+
+    deduplication_buffer = deque(maxlen=1000) # Store last 1000 pseudo-order_ids for deduplication
+    reconnect_delay = 1
+    reconnect_attempts = 0
+
+    while True:
+        try:
+            async with websockets.connect(BINANCE_WS_URL) as ws:
+                logging.info(f"Binance WebSocket connected. Subscribing to liquidations for {symbols}")
+                await ws.send(subscribe_message_binance_liquidation(symbols))
+                reconnect_attempts = 0 # Reset attempts on successful connection
+
+                async for msg in ws:
+                    raw_event = json.loads(msg)
+                    
+                    # Handle subscription confirmation
+                    if raw_event.get("result") is not None and raw_event.get("id") == 1:
+                        logging.info(f"Binance liquidation subscription confirmed: {raw_event}")
+                        continue
+
+                    # Filter out non-data messages (e.g., subscription confirmations)
+                    if "e" not in raw_event or raw_event["e"] != "forceOrder":
+                        continue
+                    
+                    normalized_event = normalize_binance_event(raw_event)
+
+                    # Simple deduplication based on order_id and timestamp
+                    event_id = (normalized_event.order_id, normalized_event.timestamp)
+                    if event_id in deduplication_buffer:
+                        logging.debug(f"Duplicate event skipped: {event_id}")
+                        continue
+                    deduplication_buffer.append(event_id)
+
+                    await queue.put(normalized_event)
+                    logging.debug(f"Put event to queue: {normalized_event.symbol} - {normalized_event.qty_usdt} USDT {normalized_event.side} at {normalized_event.price}")
+
+        except websockets.exceptions.ConnectionClosedOK:
+            logging.warning("Binance WebSocket connection closed gracefully. Reconnecting...")
+        except websockets.exceptions.ConnectionClosedError as e:
+            logging.error(f"Binance WebSocket connection closed with error: {e}. Reconnecting...", exc_info=True)
+            status_tracker.increment_error("GLOBAL_WEBSOCKET_BINANCE_LIQUIDATION") # Increment error counter
+        except Exception as e:
+            logging.critical(f"An unexpected error occurred in Binance WebSocket consumer: {e}. Reconnecting...", exc_info=True)
+            status_tracker.increment_error("GLOBAL_WEBSOCKET_BINANCE_LIQUIDATION") # Increment error counter
+        
+        reconnect_attempts += 1
+        if reconnect_attempts > Config.MAX_RECONNECT_ATTEMPTS:
+            logging.critical(f"Binance WebSocket consumer failed to reconnect after {Config.MAX_RECONNECT_ATTEMPTS} attempts. Exiting consumer.")
+            break # Exit the consumer loop
+        
+        await asyncio.sleep(reconnect_delay) # Wait before attempting to reconnect
+        reconnect_delay = min(reconnect_delay * 2, 60) # Exponential backoff, max 60 seconds

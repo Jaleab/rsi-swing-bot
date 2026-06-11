@@ -1,0 +1,133 @@
+from typing import List
+import os # Import os for environment variables
+
+class Config:
+    # --- General Settings ---
+    EXCHANGE_NAME: str = "bybit" # Name of the exchange to use (e.g., "bybit", "binance")
+    # Load symbols from environment variable, default to SOL/USDT if not set
+    SYMBOLS: List[str] = os.environ.get("BYBIT_SYMBOLS", "SOL/USDT").split(';')
+    DEFAULT_SYMBOLS_RSI_SWING_BOT: List[str] = ["BTC/USDT", "ETH/USDT"] # Define default symbols for RSI Swing Bot
+    TIMEFRAME: str = "1m"
+    SIM_MODE: bool = False # Default to False, will be overridden by argparse in executor_bot.py
+    LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "DEBUG")          # Default logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+
+    # --- API and Exchange Parameters ---
+    EXCHANGE_CLIENT: str = "bybit" # Exchange client to use (e.g., "bybit")
+    API_KEY: str = os.environ.get("BYBIT_API_KEY", "YOUR_API_KEY")    # Bybit API Key
+    API_SECRET: str = os.environ.get("BYBIT_API_SECRET", "YOUR_API_SECRET") # Bybit API Secret
+    # Corrected: Default to False if BYBIT_TESTNET env var is not set
+    TESTNET: bool = os.environ.get("BYBIT_TESTNET", "False").lower() == "true"
+    RECV_WINDOW: int = 30000         # Bybit recvWindow for API requests (milliseconds)
+
+    # --- Trading Strategy Parameters ---
+    POSITION_USDT: float = 10.0      # Default position size in USDT
+    MIN_POSITION_SIZE_USDT: float = 1.0 # Minimum position size in USDT
+    MAX_TOTAL_OPEN_POSITIONS: int = 1 # Maximum number of concurrent open positions across all symbols
+# NOTE:
+# PositionManager currently supports only ONE open position per symbol.
+# MAX_POSITIONS_PER_SYMBOL must remain 1 until PositionManager is refactored for multi-position per symbol.
+    MAX_POSITIONS_PER_SYMBOL: int = 1 # Maximum number of concurrent open positions for a single symbol
+    RISK_PER_TRADE_PERCENT: float = 0.005 # Risk per trade as a percentage of account balance
+
+    # RSI Parameters
+    RSI_LENGTH: int = 7
+    RSI_OVERSOLD: int = 40
+    RSI_OVERBOUGHT: int = 60
+
+    # Cluster Parameters
+    BIN_MODE: str = "percent"        # "absolute" or "percent"
+    BIN_PCT: float = 0.002           # 0.2% of price per bin (used for dynamic bins)
+    BIN_ABS: float = 0.5             # Fallback absolute USD per bin
+    SLIDING_WINDOW_S: int = 300      # Seconds to aggregate liquidations (e.g., 5 minutes)
+    SWEEP_WINDOW_S: int = 30         # Shorter window for sweep detection (e.g., 30 seconds)
+    SWEEP_THRESHOLD_FACTOR: float = 2.0  # Sweep detection threshold vs average cluster volume
+    MIN_SWEEP_VOLUME_USDT: float = 0.0  # Ensure sweeps have minimum economic size
+
+    # Confidence Weights
+    W_RSI: float = 0.50
+    W_CLUSTER: float = 0.30
+    W_SWEEP: float = 0.15
+    W_PROX: float = 0.05
+    W_DOMINANCE: float = 0.10 # Weight for cluster dominance in confidence score
+
+    TRADE_COOLDOWN_SECONDS: int = 60 # Cooldown period between trades for the same symbol in seconds
+    SIGNAL_COOLDOWN_SECONDS: int = 5 # Cooldown period to ignore duplicate signals for the same symbol in seconds
+
+    # --- Dynamic SL/TP Parameters ---
+    USE_DYNAMIC_SLTP: bool = False   # Enable dynamic stop loss/take profit based on clusters
+    SL_BUFFER: float = 0.005         # 0.5% buffer around support/resistance for stop loss
+    TP_BUFFER: float = 0.005         # 0.5% buffer around support/resistance for take profit
+    MIN_STOP_LOSS_PERCENT: float = 0.01 # 1% as a hard minimum for dynamic SL
+    MAX_TAKE_PROFIT_PERCENT: float = 0.05 # 5% as a hard maximum for dynamic TP
+
+    # Fallback Fixed Percentages
+    STOP_LOSS_PERCENT: float = 0.035 # 3.5%
+    TAKE_PROFIT_PERCENT: float = 0.05 # 5%
+
+    # --- Data Persistence ---
+    PERSIST_CLUSTERS: bool = True    # Enable/disable cluster state persistence
+    CLUSTER_STATE_FILE: str = "cluster_state.json" # Filename for saving cluster state
+    CLUSTER_PERSISTENCE_INTERVAL_S: int = 300 # How often to save cluster state in seconds (e.g., 5 minutes)
+    DATA_DIR: str = "data/live/live" # Directory for data files (e.g., for snapshots)
+
+    # --- Status Tracking and Snapshots ---
+    MAX_LIQUIDATION_DATA_LATENCY_SECONDS: int = 60 # Max seconds before liquidation data is considered stale
+    STATUS_SNAPSHOT_INTERVAL_S: int = 10 # How often to save status snapshot to CSV in seconds
+
+    # --- WebSocket Settings ---
+    BYBIT_LIQUIDATION_WS_ENABLED: bool = True # Enable Bybit liquidation WebSocket
+    BINANCE_LIQUIDATION_WS_ENABLED: bool = False # Enable Binance liquidation WebSocket
+    ORDERBOOK_WS_ENABLED: bool = True # Enable orderbook WebSocket
+    TRADES_WS_ENABLED: bool = True # Enable trades WebSocket
+    WS_RECEIVE_TIMEOUT_S: int = 30   # WebSocket receive timeout in seconds
+
+    # --- Trade Stream Manager Settings ---
+    TRADE_IMBALANCE_WINDOW_SIZE: int = 60 # Window size in seconds for trade imbalance calculation
+
+    # --- Simulation Settings ---
+    # Corrected: Default to False if USE_SIM_EVENTS_GENERATOR env var is not set
+    USE_SIM_EVENTS_GENERATOR: bool = True # Temporarily force to True for debugging
+    SIMULATION_RANDOM_SEED: int = int(os.environ.get("SIMULATION_RANDOM_SEED", "42")) # Seed for deterministic simulations
+    DEFAULT_SIM_PRICE: float = 20.0  # Default price for simulation mode
+    HISTORICAL_WINDOW_S: int = 3600  # Historical window for generating events in seconds (1 hour)
+    SIM_SWEEP_MIN_DELAY_S: int = 10  # Minimum delay between synthetic sweeps in seconds
+    SIM_SWEEP_MAX_DELAY_S: int = 30  # Maximum delay between synthetic sweeps in seconds
+    SIM_SWEEP_NUM_EVENTS: int = 5 # Number of individual events to compose a synthetic sweep
+    SIM_SWEEP_DURATION_S: float = 1.0 # Duration over which the individual events of a sweep are spread
+    SIM_DURATION_SECONDS: int = 300 # Duration of the simulation in seconds
+    SIM_SWEEP_FREQUENCY: float = 0.1 # Frequency of synthetic sweeps in simulation (e.g., 0.1 means 10% chance per second)
+
+    # --- Manual Sweep Injection Settings (for testing) ---
+    ENABLE_MANUAL_SWEEP_INJECTION: bool = False
+    MANUAL_SWEEP_SYMBOL: str = "SOL/USDT"
+    MANUAL_SWEEP_VOLUME_USDT: float = 5_000_000.0
+    MANUAL_SWEEP_DIRECTION: str = "buy" # "buy" or "sell"
+    MANUAL_SWEEP_PRICE_IMPACT_PCT: float = 0.5 # Percentage impact (e.g., 0.5 for 0.5%)
+
+    # --- Backtesting Settings ---
+    BACKTEST_ENABLED: bool = os.environ.get("BACKTEST_ENABLED", "False").lower() == "true"
+    BACKTEST_START_DATE: str = os.environ.get("BACKTEST_START_DATE", "2023-01-01 00:00:00")
+    BACKTEST_END_DATE: str = os.environ.get("BACKTEST_END_DATE", "2023-01-03 23:59:00")
+    BACKTEST_INITIAL_BALANCE: float = float(os.environ.get("BACKTEST_INITIAL_BALANCE", "10000.0"))
+    SIMULATION_INITIAL_BALANCE: float = float(os.environ.get("SIMULATION_INITIAL_BALANCE", "10000.0")) # Initial balance for PaperTrader in simulation
+
+    # --- Bot Operation Intervals ---
+    MARKET_LOOP_INTERVAL: int = 5    # Interval for the market loop in seconds
+    OHLCV_LIMIT: int = 200           # Number of OHLCV candles to fetch
+    QUEUE_LOG_INTERVAL: int = 60     # Interval for logging queue sizes in seconds
+
+    # --- Monitoring and UI ---
+    ENABLE_PROMETHEUS: bool = True
+    PROMETHEUS_PORT: int = 8000
+    METRICS_UPDATE_INTERVAL_S: int = 5 # How often to update resource metrics in seconds
+    ENABLE_RICH_TABLE: bool = True   # Enable/disable rich table display
+    MONITOR_INTERVAL_SECONDS: int = 60 # Interval for simple monitor output in seconds
+
+    # --- WebSocket Reconnection Settings ---
+    MAX_RECONNECT_ATTEMPTS: int = 10 # Maximum number of reconnection attempts for WebSockets
+
+    # --- Safe Mode Settings ---
+    ENABLE_SAFE_MODE: bool = True # Enable/disable safe mode
+    ERROR_THRESHOLD_INTERVAL_S: int = 300 # Time window in seconds to count errors (e.g., 5 minutes)
+    MAX_ERRORS_PER_INTERVAL: int = 5 # Max errors allowed in the interval before safe mode
+    SAFE_MODE_DURATION_S: int = 1800 # How long safe mode remains active once triggered (e.g., 30 minutes)

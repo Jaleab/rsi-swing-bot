@@ -1,0 +1,387 @@
+{
+  "uid": "bot-status-dashboard",
+  "title": "Trading Bot Status",
+  "templating": {
+    "list": [
+      {
+        "name": "symbol",
+        "label": "Trading Pair",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(bot_rsi, symbol)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {
+          "text": "btc_usdt",
+          "value": "btc_usdt"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 25,
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "type": "table",
+      "title": "All Pairs Summary",
+      "targets": [
+        {
+          "expr": "bot_rsi{symbol=~'$symbol'}",
+          "refId": "A",
+          "legendFormat": "{{symbol}}"
+        },
+        {
+          "expr": "bot_signal_state{symbol=~'$symbol'}",
+          "refId": "B",
+          "legendFormat": "{{symbol}}"
+        },
+        {
+          "expr": "bot_signal_confidence{symbol=~'$symbol'}",
+          "refId": "C",
+          "legendFormat": "{{symbol}}"
+        },
+        {
+          "expr": "bot_mark_price{symbol=~'$symbol'}",
+          "refId": "D",
+          "legendFormat": "{{symbol}}"
+        },
+        {
+          "expr": "bot_open_position{symbol=~'$symbol'}",
+          "refId": "E",
+          "legendFormat": "{{symbol}}"
+        },
+        {
+          "expr": "bot_unrealized_pnl{symbol=~'$symbol'}",
+          "refId": "F",
+          "legendFormat": "{{symbol}}"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "outerJoin",
+          "options": {
+            "byField": "symbol"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {
+              "Value #A": 1,
+              "Value #B": 2,
+              "Value #C": 3,
+              "Value #D": 4,
+              "Value #E": 5,
+              "Value #F": 6,
+              "symbol": 0
+            },
+            "renameByName": {
+              "Value #A": "RSI",
+              "Value #B": "Signal State",
+              "Value #C": "Confidence",
+              "Value #D": "Mark Price",
+              "Value #E": "Open Position",
+              "Value #F": "Unrealized PnL"
+            }
+          }
+        }
+      ],
+      "overrides": [
+        {
+          "matcher": {
+            "id": "byName",
+            "options": "Signal State"
+          },
+          "properties": [
+            {
+              "id": "mappings",
+              "value": [
+                {
+                  "value": -1,
+                  "text": "SELL"
+                },
+                {
+                  "value": 0,
+                  "text": "NEUTRAL"
+                },
+                {
+                  "value": 1,
+                  "text": "BUY"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "matcher": {
+            "id": "byName",
+            "options": "Open Position"
+          },
+          "properties": [
+            {
+              "id": "mappings",
+              "value": [
+                {
+                  "value": 0,
+                  "text": "No"
+                },
+                {
+                  "value": 1,
+                  "text": "Yes"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "matcher": {
+            "id": "byName",
+            "options": "Unrealized PnL"
+          },
+          "properties": [
+            {
+              "id": "unit",
+              "value": "usd"
+            },
+            {
+              "id": "decimals",
+              "value": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 6 },
+      "type": "graph",
+      "title": "RSI (${symbol})",
+      "targets": [{ "expr": "bot_rsi{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 6 },
+      "type": "graph",
+      "title": "Signal Confidence (${symbol})",
+      "targets": [{ "expr": "bot_signal_confidence{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 6 },
+      "type": "graph",
+      "title": "Latency (${symbol})",
+      "targets": [{ "expr": "bot_latency_sec{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 6 },
+      "type": "graph",
+      "title": "Signal State (${symbol})",
+      "targets": [{ "expr": "bot_signal_state{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "value": "-1", "text": "SELL" },
+            { "value": "0", "text": "NEUTRAL" },
+            { "value": "1", "text": "BUY" }
+          ]
+        }
+      }
+    },
+    {
+      "id": 24,
+      "gridPos": { "x": 0, "y": 22, "w": 24, "h": 2 },
+      "type": "stat",
+      "title": "Data Health (${symbol})",
+      "targets": [{ "expr": "time() - timestamp(bot_rsi{symbol=\"${symbol}\"}) < 60", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "value": "0", "text": "Stale", "color": "yellow" },
+            { "value": "1", "text": "Active", "color": "green" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 0.5, "color": "yellow" },
+              { "value": 1, "color": "green" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": { "x": 0, "y": 24, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Cluster Count (${symbol})",
+      "targets": [{ "expr": "bot_cluster_count{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 6,
+      "gridPos": { "x": 8, "y": 24, "w": 8, "h": 4 },
+      "type": "gauge",
+      "title": "Top Cluster Price (${symbol})",
+      "targets": [{ "expr": "bot_top_cluster_price{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 7,
+      "gridPos": { "x": 16, "y": 24, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Top Cluster Strength (${symbol})",
+      "targets": [{ "expr": "bot_top_cluster_strength{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 8,
+      "gridPos": { "x": 0, "y": 28, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Cluster Volume (${symbol})",
+      "targets": [{ "expr": "bot_cluster_volume{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 9,
+      "gridPos": { "x": 8, "y": 28, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Active Bins (${symbol})",
+      "targets": [{ "expr": "bot_active_bins{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 10,
+      "gridPos": { "x": 16, "y": 28, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Sweep Detected (${symbol})",
+      "targets": [{ "expr": "bot_sweep_detected{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "value": "0", "text": "No" },
+            { "value": "1", "text": "Yes" }
+          ]
+        }
+      }
+    },
+    {
+      "id": 11,
+      "gridPos": { "x": 0, "y": 32, "w": 8, "h": 4 },
+      "type": "gauge",
+      "title": "Support Band (${symbol})",
+      "targets": [{ "expr": "bot_support_band{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 12,
+      "gridPos": { "x": 8, "y": 32, "w": 8, "h": 4 },
+      "type": "gauge",
+      "title": "Resistance Band (${symbol})",
+      "targets": [{ "expr": "bot_resistance_band{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 13,
+      "gridPos": { "x": 16, "y": 32, "w": 8, "h": 4 },
+      "type": "gauge",
+      "title": "Imbalance Ratio (${symbol})",
+      "targets": [{ "expr": "bot_imbalance_ratio{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 14,
+      "gridPos": { "x": 0, "y": 36, "w": 8, "h": 4 },
+      "type": "gauge",
+      "title": "Orderbook Imbalance (${symbol})",
+      "targets": [{ "expr": "bot_orderbook_imbalance{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 15,
+      "gridPos": { "x": 8, "y": 36, "w": 8, "h": 4 },
+      "type": "gauge",
+      "title": "Trade Imbalance (${symbol})",
+      "targets": [{ "expr": "bot_trade_imbalance{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 16,
+      "gridPos": { "x": 16, "y": 36, "w": 8, "h": 4 },
+      "type": "gauge",
+      "title": "Last Liq Age (${symbol})",
+      "targets": [{ "expr": "bot_last_liq_age_seconds{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 17,
+      "gridPos": { "x": 0, "y": 40, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Open Position (${symbol})",
+      "targets": [{ "expr": "bot_open_position{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "value": "0", "text": "No" },
+            { "value": "1", "text": "Yes" }
+          ]
+        }
+      }
+    },
+    {
+      "id": 18,
+      "gridPos": { "x": 8, "y": 40, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Position Size (${symbol})",
+      "targets": [{ "expr": "bot_position_size_usdt{symbol=\"${symbol}\"}", "refId": "A" }]
+    },
+    {
+      "id": 19,
+      "gridPos": { "x": 16, "y": 40, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Position Entry (${symbol})",
+      "targets": [{ "expr": "bot_position_entry{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "usd", "decimals": 2 } }
+    },
+    {
+      "id": 20,
+      "gridPos": { "x": 0, "y": 44, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Unrealized PnL (${symbol})",
+      "targets": [{ "expr": "bot_unrealized_pnl{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "usd", "decimals": 2 } }
+    },
+    {
+      "id": 26,
+      "gridPos": { "x": 8, "y": 44, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "TP Price (${symbol})",
+      "targets": [{ "expr": "bot_target_price{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "usd", "decimals": 2 } }
+    },
+    {
+      "id": 21,
+      "gridPos": { "x": 8, "y": 44, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Realized PnL (${symbol})",
+      "targets": [{ "expr": "bot_realized_pnl{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "usd", "decimals": 2 } }
+    },
+    {
+      "id": 27,
+      "gridPos": { "x": 16, "y": 44, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "SL Price (${symbol})",
+      "targets": [{ "expr": "bot_stop_price{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "usd", "decimals": 2 } }
+    },
+    {
+      "id": 22,
+      "gridPos": { "x": 0, "y": 48, "w": 8, "h": 4 },
+      "type": "stat",
+      "title": "Current Value (${symbol})",
+      "targets": [{ "expr": "bot_current_value_usdt{symbol=\"${symbol}\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "usd", "decimals": 2 } }
+    },
+    {
+      "id": 23,
+      "gridPos": { "x": 8, "y": 48, "w": 16, "h": 4 },
+      "type": "graph",
+      "title": "Events Total (${symbol})",
+      "targets": [{ "expr": "increase(bot_events_total{symbol=\"${symbol}\"}[5m])", "refId": "A" }]
+    }
+  ]
+}

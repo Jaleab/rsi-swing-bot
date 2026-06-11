@@ -1,0 +1,13 @@
+[Unit]
+Description=RSI Swing Bot
+After=network.target
+
+[Service]
+User=your_username # Change to your actual username
+WorkingDirectory=/path/to/your/project/root # Change to the actual path of your project
+ExecStart=/usr/local/bin/docker-compose -f /path/to/your/project/root/docker-compose.yml up --build
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+@echo off
+echo Starting RSI Swing Bot and Monitor services...
+docker compose up -d
+echo Services started. Use "docker compose logs -f" to view live logs.
+echo Press any key to exit this window...
+pause > nul

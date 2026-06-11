@@ -1,0 +1,7 @@
+{
+  "SIM_MODE": true,
+  "SYMBOLS": ["SOL/USDT", "BTC/USDT"],
+  "POSITION_USDT": 10.0,
+  "RSI_LENGTH": 7,
+  "ENABLE_SAFE_MODE": true
+}

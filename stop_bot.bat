@@ -1,0 +1,6 @@
+@echo off
+echo Stopping RSI Swing Bot and Monitor services...
+docker compose down
+echo Services stopped.
+echo Press any key to exit this window...
+pause > nul

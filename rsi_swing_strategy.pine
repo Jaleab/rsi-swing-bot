@@ -1,0 +1,43 @@
+//@version=5
+strategy("RSI Swing Strategy", overlay=true, initial_capital=10000, default_qty_value=100, default_qty_type=strategy.percent_of_equity)
+
+// --- Strategy Inputs ---
+rsiLength = input.int(14, title="RSI Length", minval=1)
+oversoldLevel = input.int(30, title="Oversold Level", minval=0, maxval=100)
+overboughtLevel = input.int(70, title="Overbought Level", minval=0, maxval=100)
+stopLossPercent = input.float(2.0, title="Stop Loss %", minval=0.1, step=0.1) / 100
+takeProfitPercent = input.float(5.0, title="Take Profit %", minval=0.1, step=0.1) / 100
+
+// --- RSI Calculation ---
+rsi = ta.rsi(close, rsiLength)
+
+// --- Plot RSI for visualization (optional, for lower pane) ---
+plot(rsi, title="RSI", color=color.purple)
+hline(oversoldLevel, "Oversold", color=color.red)
+hline(overboughtLevel, "Overbought", color=color.green)
+
+// --- Entry Conditions ---
+longCondition = ta.cross(rsi, oversoldLevel)
+
+// --- Exit Conditions ---
+// Exit on RSI cross down from overbought
+exitLongRSI = ta.cross(overboughtLevel, rsi)
+
+// --- Strategy Logic ---
+if (longCondition)
+    strategy.entry("Long", strategy.long)
+
+// Set Stop Loss and Take Profit for Long positions
+if (strategy.position_size > 0)
+    stopLossPrice = strategy.position_avg_price * (1 - stopLossPercent)
+    takeProfitPrice = strategy.position_avg_price * (1 + takeProfitPercent)
+    
+    strategy.exit("Exit Long", from_entry="Long", stop=stopLossPrice, limit=takeProfitPrice)
+
+// Close position if RSI crosses down from overbought
+if (exitLongRSI)
+    strategy.close("Long", comment="RSI Overbought Close")
+
+// --- Plotting Signals (optional) ---
+plotshape(longCondition, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.labelup, text="Buy", textcolor=color.white)
+plotshape(exitLongRSI, title="Sell Signal", location=location.abovebar, color=color.red, style=shape.labeldown, text="Sell", textcolor=color.white)
