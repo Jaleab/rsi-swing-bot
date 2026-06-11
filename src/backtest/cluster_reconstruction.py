@@ -13,6 +13,11 @@ class ClusterReconstructor:
         self.cluster_aggregator = cluster_aggregator
         self.historical_liquidation_events: Deque[LiquidationEvent] = deque()
         self.last_replayed_timestamp = 0
+        self.current_sweep_data: Dict[str, Any] = {
+            'is_sweep': False,
+            'bullish_sweep_volume': 0.0,
+            'bearish_sweep_volume': 0.0
+        }
 
     def load_historical_events(self, file_path: str):
         """
@@ -52,10 +57,24 @@ class ClusterReconstructor:
               self.historical_liquidation_events[0]["timestamp"] <= current_candle_timestamp_ms:
             
             event = self.historical_liquidation_events.popleft()
-            # Ensure the event timestamp is not less than the last replayed to maintain order
             if event["timestamp"] >= self.last_replayed_timestamp:
-                await self.cluster_aggregator.ingest(event)
+                self.cluster_aggregator.ingest(event)
                 self.last_replayed_timestamp = event["timestamp"]
+        
+        # Update sweep data for current candle based on latest aggregator state
+        # Use a representative symbol and price for sweep detection
+        if self.config.SYMBOLS:
+            sym = self.config.SYMBOLS[0]
+            price = self.cluster_aggregator._get_approx_current_price(sym)
+            if price and price > 0:
+                is_sweep, bull, bear = self.cluster_aggregator.is_sweep_detected(
+                    sym, price, current_time_ms_override=current_candle_timestamp_ms
+                )
+                self.current_sweep_data = {
+                    'is_sweep': is_sweep,
+                    'bullish_sweep_volume': bull,
+                    'bearish_sweep_volume': bear
+                }
 
 # Example Usage (for testing)
 async def main_test():
@@ -106,10 +125,10 @@ async def main_test():
         await reconstructor.replay_events_up_to_timestamp(current_candle_timestamp)
         
         # Get snapshot and check for sweeps
-        snapshot = await cluster_aggregator.get_snapshot(100.0) # Pass a representative price
+        snapshot = cluster_aggregator.get_snapshot("SOL/USDT")
         if snapshot["top_clusters"]:
             top_cluster_bin = snapshot["top_clusters"][0]["bin_idx"]
-            sweep_volume = await cluster_aggregator.is_sweep_detected(top_cluster_bin, 100.0)
+            sweep_volume = cluster_aggregator.is_sweep_detected(top_cluster_bin, 100.0)
             if sweep_volume:
                 print(f"  !!! SWEEP DETECTED in top cluster bin {top_cluster_bin} with volume {sweep_volume:.2f} USDT !!!")
             

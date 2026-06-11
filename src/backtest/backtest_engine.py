@@ -1,28 +1,31 @@
-print("Script is starting...") # Added debug print at the very beginning
+print("Script is starting...")
 import pandas as pd
+import numpy as np
 import asyncio
 import os
 import csv
 from datetime import datetime
-from typing import Dict, Any, Literal, TypedDict, Optional
+from typing import Dict, Any, Literal, TypedDict, Optional, List
+from unittest.mock import MagicMock
 
 from src.config import Config
 from src.rsi_calc import calculate_rsi
-from src.cluster_aggregator import ClusterAggregator, LiquidationEvent # Assuming LiquidationEvent is defined here or common
-from src.signal_generator import SignalGenerator, Signal
+from src.cluster_aggregator import ClusterAggregator, LiquidationEvent
+from src.signal_generator import SignalGenerator
 from src.backtest.cluster_reconstruction import ClusterReconstructor
+from src.position import Position
+
+TAKER_FEE_RATE = 0.00055  # 0.055% taker fee (Bybit standard)
+SLIPPAGE_BPS = 1.0        # 1 basis point slippage per trade
 
 class BacktestEngine:
     def __init__(self, config: Config, historical_ohlcv: pd.DataFrame, historical_liquidation_file: Optional[str] = None):
         self.config = config
         self.ohlcv = historical_ohlcv
-        # In backtesting, we don't have live OrderBookManager and TradeStreamManager.
-        # SignalGenerator needs to be adapted for backtesting by not requiring them.
-        # For now, we'll pass None and update SignalGenerator init for backtest mode
-        self.cluster_aggregator = ClusterAggregator(config)
-        self.signal_generator = SignalGenerator(config, self.cluster_aggregator)
-        self.cluster_reconstructor = ClusterReconstructor(config, self.cluster_aggregator)
-        from src.position_manager import PositionManager, Position
+        self.taker_fee = TAKER_FEE_RATE
+        self.slippage_pct = SLIPPAGE_BPS / 10000
+        self.initial_balance = config.POSITION_USDT * 10  # Simulated starting capital
+        from src.position_manager import PositionManager
         from src.abstract_exchange import AbstractExchangeClient
         from src.status_tracker import PairStatus, StatusTracker
         from src.guards import GuardResult
@@ -51,60 +54,50 @@ class BacktestEngine:
 
         symbol = self.config.SYMBOLS[0] if self.config.SYMBOLS else "SOL/USDT"
         mock_status_tracker = MockStatusTracker(symbol)
+        mock_metrics = MagicMock()
         self.cluster_aggregator = ClusterAggregator(config, mock_status_tracker)
         self.signal_generator = SignalGenerator(config, self.cluster_aggregator)
         self.cluster_reconstructor = ClusterReconstructor(config, self.cluster_aggregator)
-        self.position_manager = PositionManager(config, MockExchangeClient(), None, mock_status_tracker)
+        self.position_manager = PositionManager(config, MockExchangeClient(), mock_metrics, mock_status_tracker)
 
         if historical_liquidation_file:
             self.cluster_reconstructor.load_historical_events(historical_liquidation_file)
         
-        self.trade_log = [] # In-memory list to store trade logs
-        self.signal_log = [] # In-memory list to store all generated signals
-        self.metrics = {
-            "cumulative_pnl": 0.0,
-            "max_drawdown": 0.0,
-            "total_trades": 0,
-            "winning_trades": 0,
-            "losing_trades": 0,
-            "equity_curve": [], # To store equity curve over time
-        }
+        self.trade_log = []
+        self.signal_log = []
+        self.equity_curve = []  # [(timestamp, equity_value), ...]
+        self.current_equity = self.initial_balance
 
-    def _log_backtest_trade(self, symbol, timestamp, trade_type, signal_type, price, amount, confidence="N/A", reason="N/A", target_price=None, stop_price=None, pnl=None, source="RSI_ONLY"):
+    def _deduct_fees(self, entry_amount: float, entry_price: float, exit_amount: float, exit_price: float) -> float:
+        """Calculate total fees + slippage for a round-trip trade."""
+        entry_fee = entry_amount * entry_price * self.taker_fee
+        exit_fee = exit_amount * exit_price * self.taker_fee
+        slip_cost = (entry_amount * entry_price + exit_amount * exit_price) * self.slippage_pct
+        return entry_fee + exit_fee + slip_cost
+
+    def _log_backtest_trade(self, symbol, timestamp, trade_type, signal_type, price, amount,
+                            confidence="N/A", reason="N/A", target_price=None, stop_price=None,
+                            pnl=None, entry_price=None, source="RSI_ONLY"):
         trade_entry = {
-            'Symbol': symbol,
-            'Timestamp': timestamp,
-            'Mode': "BACKTEST",
-            'Trade Type': trade_type,
-            'Signal Type': signal_type,
-            'Price': price,
-            'Amount': amount,
-            'Confidence': confidence,
-            'Reason': reason,
-            'TP': target_price,
-            'SL': stop_price,
-            'PNL': pnl,
+            'Symbol': symbol, 'Timestamp': timestamp, 'Mode': "BACKTEST",
+            'Trade Type': trade_type, 'Signal Type': signal_type,
+            'Price': price, 'Amount': amount, 'Confidence': confidence,
+            'Reason': reason, 'TP': target_price, 'SL': stop_price,
+            'PNL': round(pnl, 4) if pnl is not None else None,
+            'Entry_Price': entry_price,
             'Source': source
         }
         self.trade_log.append(trade_entry)
-        # Update in-memory metrics
         if pnl is not None:
-            self.metrics["cumulative_pnl"] += pnl
-            self.metrics["total_trades"] += 1
-            if pnl > 0:
-                self.metrics["winning_trades"] += 1
-            else:
-                self.metrics["losing_trades"] += 1
-            
-            # Update equity curve (for plotting later)
-            self.metrics["equity_curve"].append({"timestamp": timestamp, "cumulative_pnl": self.metrics["cumulative_pnl"]})
+            self.current_equity += pnl
+            self.equity_curve.append({"timestamp": timestamp, "equity": self.current_equity})
 
     async def run_backtest(self):
         symbol = self.config.SYMBOLS[0] if self.config.SYMBOLS else "SOL/USDT"
         print(f"Running backtest for {symbol} with {len(self.ohlcv)} candles...")
 
         # Calculate RSI for the entire OHLCV data once
-        self.ohlcv['rsi'] = calculate_rsi(self.ohlcv, self.config.RSI_LENGTH)
+        self.ohlcv['rsi'] = calculate_rsi(self.ohlcv, length=self.config.RSI_LENGTH)
 
         for i in range(len(self.ohlcv)):
             current_candle = self.ohlcv.iloc[i]
@@ -168,41 +161,47 @@ class BacktestEngine:
                     self._log_backtest_trade(
                         symbol,
                         datetime.fromtimestamp(current_timestamp_ms / 1000).isoformat(),
-                        'LONG', signal_type, current_price, amount,
+                        'ENTRY', signal_type, current_price, amount,
                         confidence=trading_signal.get('confidence_score', 0),
                         reason=trading_signal.get('reason', ''),
                         target_price=sl_tp['target_price'], stop_price=sl_tp['stop_price'],
+                        entry_price=current_price,
                         source=trading_signal.get('reason', '')
                     )
-                    print(f"Backtest: LONG Entry at {current_price:.2f}. Signal: {signal_type}")
                 else:
-                    print(f"Backtest: Cannot open position. {guard_result.reason}")
+                    pass
 
             # Exit
             elif current_position:
                 sl_hit = current_position.stop_price and current_price <= current_position.stop_price
                 tp_hit = current_position.target_price and current_price >= current_position.target_price
-                rsi_exit = is_short_signal  # Short signal while long = RSI reversal
+                rsi_exit = is_short_signal
                 
                 if sl_hit or tp_hit or rsi_exit:
-                    pnl = (current_price - current_position.entry_price) * current_position.size
+                    exit_price = current_position.stop_price if sl_hit else (current_position.target_price if tp_hit else current_price)
+                    gross_pnl = (exit_price - current_position.entry_price) * current_position.size
+                    fees = self._deduct_fees(current_position.size, current_position.entry_price,
+                                             current_position.size, exit_price)
+                    net_pnl = gross_pnl - fees
                     exit_reason = "RSI_Exit"
                     if sl_hit:
                         exit_reason = "SL_Hit"
                     elif tp_hit:
                         exit_reason = "TP_Hit"
                     
-                    self.position_manager.remove_position(symbol)
                     self._log_backtest_trade(
                         symbol,
                         datetime.fromtimestamp(current_timestamp_ms / 1000).isoformat(),
-                        'LONG', 'Exit', current_price, current_position.size,
-                        pnl=pnl, reason=exit_reason,
+                        'EXIT', 'Exit', exit_price, current_position.size,
+                        pnl=net_pnl, reason=exit_reason,
                         target_price=current_position.target_price,
                         stop_price=current_position.stop_price,
-                        source=trading_signal.get('reason', '')
+                        entry_price=current_position.entry_price,
+                        source=f"{exit_reason} | gross={gross_pnl:.2f} fees={fees:.2f}"
                     )
-                    print(f"Backtest: LONG Exit at {current_price:.2f}. PnL: {pnl:.2f}. Reason: {exit_reason}")
+                
+                self.position_manager.remove_position(symbol)
+                current_position = None
             
             # Update unrealized PnL if in position
             if current_position:
@@ -214,7 +213,98 @@ class BacktestEngine:
             await asyncio.sleep(0)
 
         self._save_signal_log_to_csv("signal_log.csv")
-        return self.trade_log, self.metrics
+        self._save_trade_log_to_csv()
+        summary = self.calculate_metrics()
+        summary["trade_log"] = self.trade_log
+        summary["signal_log"] = self.signal_log
+        return summary
+
+    def calculate_metrics(self) -> Dict[str, Any]:
+        """Calculate comprehensive performance metrics from trade log."""
+        exit_trades = [t for t in self.trade_log if t['Trade Type'] == 'EXIT']
+        pnls = [t['PNL'] for t in exit_trades if t['PNL'] is not None]
+
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p < 0]
+
+        total_pnl = sum(pnls)
+        total_trades = len(pnls)
+        win_rate = len(wins) / total_trades if total_trades > 0 else 0
+        avg_win = np.mean(wins) if wins else 0
+        avg_loss = np.mean(losses) if losses else 0
+        total_wins_pnl = sum(wins) if wins else 0
+        total_losses_pnl = abs(sum(losses)) if losses else 1
+        profit_factor = total_wins_pnl / total_losses_pnl if total_losses_pnl > 0 else float('inf')
+
+        # Equity curve
+        if self.equity_curve:
+            eq_series = pd.Series([e["equity"] for e in self.equity_curve])
+            returns = eq_series.pct_change().dropna()
+            sharpe = (returns.mean() * 252) / (returns.std() * np.sqrt(252)) if returns.std() > 0 and len(returns) > 1 else 0
+            sortino_std = returns[returns < 0].std()
+            sortino = (returns.mean() * 252) / (sortino_std * np.sqrt(252)) if sortino_std and sortino_std > 0 and len(returns) > 1 else 0
+            peak = eq_series.expanding().max()
+            drawdown_series = (eq_series - peak) / peak
+            max_dd = drawdown_series.min()
+        else:
+            sharpe = 0
+            sortino = 0
+            max_dd = 0
+
+        # Benchmark: buy-and-hold
+        if len(self.ohlcv) > 1:
+            bh_initial = self.ohlcv['close'].iloc[0]
+            bh_final = self.ohlcv['close'].iloc[-1]
+            bh_return = (bh_final - bh_initial) / bh_initial * 100
+        else:
+            bh_return = 0
+
+        strategy_return = (self.current_equity - self.initial_balance) / self.initial_balance * 100
+
+        # Entry signal breakdown
+        signal_counts = {}
+        for t in self.trade_log:
+            if t['Trade Type'] == 'ENTRY':
+                sig = t.get('Signal Type', 'Unknown')
+                signal_counts[sig] = signal_counts.get(sig, 0) + 1
+
+        # Exit reason breakdown
+        exit_reasons = {}
+        for t in exit_trades:
+            reason = t.get('Reason', 'Unknown')
+            exit_reasons[reason] = exit_reasons.get(reason, 0) + 1
+
+        return {
+            "symbol": self.config.SYMBOLS[0] if self.config.SYMBOLS else "SOL/USDT",
+            "initial_balance": self.initial_balance,
+            "final_equity": round(self.current_equity, 2),
+            "total_pnl": round(total_pnl, 2),
+            "strategy_return_pct": round(strategy_return, 2),
+            "buyhold_return_pct": round(bh_return, 2),
+            "alpha_pct": round(strategy_return - bh_return, 2),
+            "total_trades": total_trades,
+            "winning_trades": len(wins),
+            "losing_trades": len(losses),
+            "win_rate_pct": round(win_rate * 100, 2),
+            "avg_win": round(avg_win, 2),
+            "avg_loss": round(avg_loss, 2),
+            "profit_factor": round(profit_factor, 2),
+            "sharpe_ratio": round(sharpe, 3),
+            "sortino_ratio": round(sortino, 3),
+            "max_drawdown_pct": round(max_dd * 100, 2) if max_dd else 0,
+            "signal_breakdown": signal_counts,
+            "exit_reason_breakdown": exit_reasons,
+            "candles_processed": len(self.ohlcv),
+        }
+
+    def _save_trade_log_to_csv(self):
+        if not self.trade_log:
+            return
+        keys = self.trade_log[0].keys()
+        with open("backtest_trades.csv", 'w', newline='') as f:
+            w = csv.DictWriter(f, keys)
+            w.writeheader()
+            w.writerows(self.trade_log)
 
     def _log_signal(self, timestamp: int, mark_price: float, signal: Dict[str, Any]):
         signal_entry = {
@@ -296,19 +386,20 @@ async def main_test():
     # We need to temporarily set SIM_MODE to True for backtesting to use the simulated path in PositionManager
     Config.SIM_MODE = True
     backtest_engine = BacktestEngine(config, df_ohlcv, dummy_liquidation_csv_path)
-    trade_log, metrics = await backtest_engine.run_backtest() # Capture returned results
-    Config.SIM_MODE = False # Reset SIM_MODE after backtest
+    summary = await backtest_engine.run_backtest()
+    Config.SIM_MODE = False
 
-    print("\n--- Backtest Results ---")
-    print("\nTrade Log:")
-    for trade in trade_log:
-        print(trade)
-    
-    print("\nPerformance Metrics:")
-    for key, value in metrics.items():
-        if key == "equity_curve":
-            print(f"  {key}: {len(value)} data points")
+    print("\n========== Backtest Results ==========")
+    for key, value in summary.items():
+        if key in ('trade_log', 'signal_log', 'signal_breakdown', 'exit_reason_breakdown'):
+            print(f"\n--- {key} ---")
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    print(f"  {k}: {v}")
+            elif isinstance(value, list):
+                print(f"  {len(value)} entries")
+                for t in value[-5:]:
+                    print(f"  {t}")
         else:
             print(f"  {key}: {value}")
-
-    print("\nBacktest test completed (in-memory).")
+    print("========== Backtest Complete ==========")
