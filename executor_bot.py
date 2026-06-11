@@ -261,14 +261,15 @@ async def _update_and_manage_position(
         metrics_exporter_obj.update_current_value_usdt(symbol, position.current_value)
         metrics_exporter_obj.update_mark_price(symbol, s.mark_price)
         
-        # Check for exit conditions
+        # Check for exit conditions (SL, TP, and RSI reversal)
         exit_signal = signal_generator.check_exit_signal(
             symbol,
             s.mark_price,
             position.position_type,
             position.entry_price,
             position.target_price,
-            position.stop_price
+            position.stop_price,
+            rsi_value=s.rsi_value
         )
 
         if exit_signal:

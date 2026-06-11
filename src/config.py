@@ -29,10 +29,12 @@ class Config:
     MAX_POSITIONS_PER_SYMBOL: int = 1 # Maximum number of concurrent open positions for a single symbol
     RISK_PER_TRADE_PERCENT: float = 0.005 # Risk per trade as a percentage of account balance
 
-    # RSI Parameters
-    RSI_LENGTH: int = 7
-    RSI_OVERSOLD: int = 40
-    RSI_OVERBOUGHT: int = 60
+    # RSI Parameters (aligned with Pine Script prototype and industry standard)
+    RSI_LENGTH: int = 14
+    RSI_OVERSOLD: int = 30
+    RSI_OVERBOUGHT: int = 70
+    ENABLE_RSI_EXIT: bool = True  # Enable RSI reversal exit logic
+    TIMEFRAME: str = "5m"         # 5m minimum for RSI swing signals (was 1m)
 
     # Cluster Parameters
     BIN_MODE: str = "percent"        # "absolute" or "percent"

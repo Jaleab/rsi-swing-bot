@@ -274,25 +274,26 @@ class SignalGenerator:
         position_type: str,
         entry_price: float,
         target_price: Optional[float],
-        stop_price: Optional[float]
+        stop_price: Optional[float],
+        rsi_value: Optional[float] = None
     ) -> Optional[str]:
         """
-        Checks if an exit signal is generated based on current price, target, and stop loss.
+        Checks exit conditions: SL, TP, and RSI reversal.
         """
         if position_type == "LONG":
-            # Check Stop Loss for LONG position
             if stop_price is not None and current_price <= stop_price:
                 return "STOP_LOSS"
-            # Check Take Profit for LONG position
             if target_price is not None and current_price >= target_price:
                 return "TAKE_PROFIT"
+            if Config.ENABLE_RSI_EXIT and rsi_value is not None and rsi_value > Config.RSI_OVERBOUGHT:
+                return "RSI_OVERBOUGHT"
         elif position_type == "SHORT":
-            # Check Stop Loss for SHORT position
             if stop_price is not None and current_price >= stop_price:
                 return "STOP_LOSS"
-            # Check Take Profit for SHORT position
             if target_price is not None and current_price <= target_price:
                 return "TAKE_PROFIT"
+            if Config.ENABLE_RSI_EXIT and rsi_value is not None and rsi_value < Config.RSI_OVERSOLD:
+                return "RSI_OVERSOLD"
         
         return None
 
