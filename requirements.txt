@@ -9,3 +9,5 @@ tabulate
 rich
 prometheus_client>=0.20.0
 sortedcontainers
+pytz
+requests
