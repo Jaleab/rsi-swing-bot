@@ -195,11 +195,9 @@ async def _get_current_price(exchange_client: AbstractExchangeClient, symbol: st
        (current_time_ms - s.last_mark_price_update_ms < Config.MAX_LIQUIDATION_DATA_LATENCY_SECONDS * 1000):
         return s.mark_price
     
-    # If mark_price is stale or not set, attempt to fetch a fresh one
-    logger.debug(f"[{symbol}] Mark price is stale or not set. Attempting to fetch fresh price.")
+    logger.debug(f"[{symbol}] Mark price stale or not set. Attempting to fetch fresh price.")
     try:
         if Config.SIM_MODE:
-            # In SIM_MODE, use a default or a simulated price
             s.mark_price = Config.DEFAULT_SIM_PRICE
             s.last_mark_price_update_ms = current_time_ms
             return s.mark_price
@@ -209,17 +207,13 @@ async def _get_current_price(exchange_client: AbstractExchangeClient, symbol: st
         if mark_price:
             s.mark_price = float(mark_price)
             s.last_mark_price_update_ms = current_time_ms
-            logger.info(f"[{symbol}] Fetched fresh mark price from exchange: {s.mark_price}")
             return s.mark_price
     except Exception as e:
-        logger.warning(f"[{symbol}] Could not fetch fresh mark price from exchange: {e}. Using default sim price {Config.DEFAULT_SIM_PRICE}")
-        status_tracker.increment_error(symbol) # Increment error count for mark price fetching failure
-        # If fetching fails, and we have a stale price, we might still use it or default
+        logger.warning(f"[{symbol}] Ticker fetch failed: {e}")
         if s.mark_price is not None:
-            logger.warning(f"[{symbol}] Using stale mark price: {s.mark_price}")
             return s.mark_price
     
-    s.mark_price = Config.DEFAULT_SIM_PRICE # Fallback if no price can be obtained
+    s.mark_price = Config.DEFAULT_SIM_PRICE
     s.last_mark_price_update_ms = current_time_ms
     return s.mark_price
 
@@ -428,6 +422,12 @@ async def market_loop(
                             logger.warning(f"[{symbol}] RSI calc resulted in empty DataFrame.")
                     last_ohlcv_update[symbol] = current_time
                 df = ohlcv_dataframes.get(symbol)
+                # Update mark price from OHLCV close if stale
+                if df is not None and not df.empty:
+                    ohlcv_close = df['close'].iloc[-1]
+                    if s.mark_price is None or s.mark_price == Config.DEFAULT_SIM_PRICE:
+                        s.mark_price = float(ohlcv_close)
+                        s.last_mark_price_update_ms = int(time.time() * 1000)
                 # Added debug logs for OHLCV DataFrame and current price before signal generation
                 logger.debug(f"[{symbol}] OHLCV DataFrame before signal generation (first 5 rows):\n{df.head().to_string() if df is not None else 'None'}")
                 logger.debug(f"[{symbol}] Current mark price before signal generation: {s.mark_price}")
