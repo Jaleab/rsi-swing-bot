@@ -56,9 +56,9 @@ async def test_sweep_detection_high_volume_single_bin(sweep_aggregator_instance)
     )
     aggregator.ingest(sweep_event)
     
-    is_sweep, actual_sweep_volume = aggregator.is_sweep_detected(symbol, price)
+    is_sweep, bullish, bearish = aggregator.is_sweep_detected(symbol, price)
     assert is_sweep is True
-    assert actual_sweep_volume == 50000.0
+    assert (bullish + bearish) == 50000.0
     # The historical_avg would be 1000.0 * 5 events / 5 events = 1000.0 per event (roughly)
     # The recent volume (50000.0) is much higher than 1000.0 * SWEEP_THRESHOLD_FACTOR (2.0) = 2000.0
 
@@ -89,7 +89,7 @@ async def test_sweep_detection_below_min_volume(sweep_aggregator_instance):
     )
     aggregator.ingest(low_sweep_event)
 
-    is_sweep, actual_sweep_volume = aggregator.is_sweep_detected(symbol, price)
+    is_sweep, bullish, bearish = aggregator.is_sweep_detected(symbol, price)
     assert is_sweep is False # 100.0 USDT is less than MIN_SWEEP_VOLUME_USDT (500.0)
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_sweep_detection_multiple_bins_no_single_sweep(sweep_aggregator_in
 
     # Check that no single bin sweep is detected (as volume is spread)
     for event in [event1, event2, event3]:
-        is_sweep, actual_sweep_volume = aggregator.is_sweep_detected(symbol, event.price)
+        is_sweep, _, _ = aggregator.is_sweep_detected(symbol, event.price)
         assert is_sweep is False # Each event's volume (5000-5200) is not enough to trigger a sweep by itself
 
 @pytest.mark.asyncio
@@ -172,9 +172,9 @@ async def test_sweep_detection_just_above_threshold(sweep_aggregator_instance):
     )
     aggregator.ingest(sweep_event)
 
-    is_sweep, actual_sweep_volume = aggregator.is_sweep_detected(symbol, price)
+    is_sweep, bullish, bearish = aggregator.is_sweep_detected(symbol, price)
     assert is_sweep is True
-    assert actual_sweep_volume == sweep_usdt
+    assert (bullish + bearish) == sweep_usdt
 
 @pytest.mark.asyncio
 async def test_sweep_detection_just_below_threshold(sweep_aggregator_instance):
@@ -207,7 +207,7 @@ async def test_sweep_detection_just_below_threshold(sweep_aggregator_instance):
     )
     aggregator.ingest(no_sweep_event)
 
-    is_sweep, actual_sweep_volume = aggregator.is_sweep_detected(symbol, price)
+    is_sweep, bullish, bearish = aggregator.is_sweep_detected(symbol, price)
     assert is_sweep is False
 
 @pytest.mark.asyncio
@@ -251,7 +251,7 @@ async def test_sweep_detection_across_sweep_window_boundary(sweep_aggregator_ins
     aggregator.ingest(new_sweep_event)
 
     # The old event's volume should not contribute to the current sweep calculation
-    is_sweep, actual_sweep_volume = aggregator.is_sweep_detected(symbol, price)
+    is_sweep, bullish, bearish = aggregator.is_sweep_detected(symbol, price)
     
     assert is_sweep is False # New event volume (1500) is less than historical_avg (1000) * factor (2.0) = 2000.0
 
@@ -275,7 +275,7 @@ async def test_no_sweep_when_historical_avg_is_zero(sweep_aggregator_instance):
     )
     aggregator.ingest(sweep_event)
 
-    is_sweep, actual_sweep_volume = aggregator.is_sweep_detected(symbol, price)
+    is_sweep, bullish, bearish = aggregator.is_sweep_detected(symbol, price)
     assert is_sweep is True # Should be True because recent_volume (50000.0) > MIN_SWEEP_VOLUME_USDT (500.0) and historical_avg is 0.0
 
 @pytest.mark.asyncio
@@ -318,10 +318,10 @@ async def test_sweep_detection_multiple_symbols(sweep_aggregator_instance):
         price=sol_price, qty=500.0, qty_usdt=50000.0, side="LONG", order_id="sol_sweep_id"
     )
     aggregator.ingest(sol_sweep_event)
-    is_sol_sweep, sol_actual_sweep_volume = aggregator.is_sweep_detected(sol_symbol, sol_price)
+    is_sol_sweep, sol_bullish, sol_bearish = aggregator.is_sweep_detected(sol_symbol, sol_price)
     assert is_sol_sweep is True
-    assert sol_actual_sweep_volume == 50000.0
+    assert (sol_bullish + sol_bearish) == 50000.0
 
     # Ensure no sweep for ETH/USDT (no recent large event)
-    is_eth_sweep, eth_actual_sweep_volume = aggregator.is_sweep_detected(eth_symbol, eth_price)
+    is_eth_sweep, _, _ = aggregator.is_sweep_detected(eth_symbol, eth_price)
     assert is_eth_sweep is False

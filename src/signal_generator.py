@@ -93,7 +93,8 @@ class SignalGenerator:
         cluster_snapshot: Dict,
         is_liquidation_data_available: bool,
         is_sweep: bool = False,
-        actual_sweep_volume: float = 0.0
+        bullish_sweep_volume: float = 0.0,
+        bearish_sweep_volume: float = 0.0
     ) -> Dict:
         logging.debug(f"[{symbol}] SignalGenerator.decide method entered. Current price: {current_price}, OHLCV last close: {ohlcv_df['close'].iloc[-1] if not ohlcv_df.empty else 'N/A'}")
         """
@@ -138,12 +139,17 @@ class SignalGenerator:
                 logging.debug(f"[{symbol}] Cluster Dominance Score: {cluster_dominance_score:.2f}")
                 decision_reasons.append(f"Cluster Dominance Score: {cluster_dominance_score:.2f}")
 
-        # --- 3. Sweep Score Calculation ---
+        # --- 3. Sweep Score Calculation (directional) ---
         sweep_score = 0.0
-        if is_liquidation_data_available and is_sweep:
-            sweep_score = 1.0
-            logging.debug(f"[{symbol}] Sweep Detected: {actual_sweep_volume:.2f} USDT")
-            decision_reasons.append(f"Sweep Detected: {actual_sweep_volume:.2f} USDT")
+        sweep_direction = "neutral"
+        if is_liquidation_data_available:
+            net_sweep = bullish_sweep_volume - bearish_sweep_volume
+            if abs(net_sweep) >= self.config.MIN_SWEEP_VOLUME_USDT:
+                sweep_score = 1.0
+                sweep_direction = "bullish" if net_sweep > 0 else "bearish"
+            if is_sweep:
+                logging.debug(f"[{symbol}] Sweep Detected: bullish={bullish_sweep_volume:.2f}, bearish={bearish_sweep_volume:.2f}, dir={sweep_direction}")
+                decision_reasons.append(f"Sweep Detected: bull={bullish_sweep_volume:.2f} bear={bearish_sweep_volume:.2f} dir={sweep_direction}")
         
         # --- Calculate Composite Confidence Score ---
         weighted_rsi_score = Config.W_RSI * rsi_score
@@ -166,58 +172,60 @@ class SignalGenerator:
         decision_reasons.append(f"Composite Confidence Score: {confidence_score:.2f}")
 
         # --- Determine Final Signal Based on Hybrid Logic ---
-        # Initialize signal_type based on RSI, then modify with sweeps and clusters
+        aligned_sweep = sweep_score > 0
+        sweep_conflicts_with_rsi = False
+
         if rsi_signal == "LONG":
-            if is_sweep and actual_sweep_volume >= self.config.MIN_SWEEP_VOLUME_USDT: # Bullish sweep detected
+            sweep_conflicts_with_rsi = sweep_direction == "bearish" and aligned_sweep
+            if sweep_conflicts_with_rsi:
+                signal_type = "NEUTRAL"
+                decision_reasons.append("SIGNAL_CANCELLED (Bearish Sweep opposite Long RSI)")
+            elif aligned_sweep and sweep_direction == "bullish":
                 if cluster_dominance_score >= self.CONFIDENCE_HIGH_THRESHOLD:
-                    signal_type = "STRONG_LONG" # RSI + Aligned Sweep + High Cluster Dominance
-                    decision_reasons.append("STRONG_LONG (RSI + Sweep + Dominant Cluster)")
+                    signal_type = "STRONG_LONG"
+                    decision_reasons.append("STRONG_LONG (RSI + Bullish Sweep + Dominant Cluster)")
                 elif cluster_impact_score >= self.CONFIDENCE_MEDIUM_THRESHOLD:
-                    signal_type = "MEDIUM_LONG" # RSI + Aligned Sweep + Medium Cluster Impact
-                    decision_reasons.append("MEDIUM_LONG (RSI + Sweep + Cluster Impact)")
+                    signal_type = "MEDIUM_LONG"
+                    decision_reasons.append("MEDIUM_LONG (RSI + Bullish Sweep + Cluster Impact)")
                 else:
-                    signal_type = "MEDIUM_LONG" # RSI + Aligned Sweep (without strong cluster support)
-                    decision_reasons.append("MEDIUM_LONG (RSI + Sweep)")
+                    signal_type = "MEDIUM_LONG"
+                    decision_reasons.append("MEDIUM_LONG (RSI + Bullish Sweep)")
             elif cluster_dominance_score >= self.CONFIDENCE_HIGH_THRESHOLD and cluster_impact_score >= self.CONFIDENCE_MEDIUM_THRESHOLD:
-                signal_type = "MEDIUM_LONG" # RSI + Dominant Cluster + Medium Impact
+                signal_type = "MEDIUM_LONG"
                 decision_reasons.append("MEDIUM_LONG (RSI + Dominant Cluster)")
-            elif rsi_score > 0: # RSI alone
+            elif rsi_score > 0:
                 signal_type = "LOW_CONFIDENCE_LONG"
                 decision_reasons.append("LOW_CONFIDENCE_LONG (RSI Only)")
             else:
                 signal_type = "NEUTRAL"
                 decision_reasons.append("NEUTRAL (RSI but no supporting factors)")
         elif rsi_signal == "SHORT":
-            if is_sweep and actual_sweep_volume <= -self.config.MIN_SWEEP_VOLUME_USDT: # Bearish sweep detected
+            sweep_conflicts_with_rsi = sweep_direction == "bullish" and aligned_sweep
+            if sweep_conflicts_with_rsi:
+                signal_type = "NEUTRAL"
+                decision_reasons.append("SIGNAL_CANCELLED (Bullish Sweep opposite Short RSI)")
+            elif aligned_sweep and sweep_direction == "bearish":
                 if cluster_dominance_score >= self.CONFIDENCE_HIGH_THRESHOLD:
-                    signal_type = "STRONG_SHORT" # RSI + Aligned Sweep + High Cluster Dominance
-                    decision_reasons.append("STRONG_SHORT (RSI + Sweep + Dominant Cluster)")
+                    signal_type = "STRONG_SHORT"
+                    decision_reasons.append("STRONG_SHORT (RSI + Bearish Sweep + Dominant Cluster)")
                 elif cluster_impact_score >= self.CONFIDENCE_MEDIUM_THRESHOLD:
-                    signal_type = "MEDIUM_SHORT" # RSI + Aligned Sweep + Medium Cluster Impact
-                    decision_reasons.append("MEDIUM_SHORT (RSI + Sweep + Cluster Impact)")
+                    signal_type = "MEDIUM_SHORT"
+                    decision_reasons.append("MEDIUM_SHORT (RSI + Bearish Sweep + Cluster Impact)")
                 else:
-                    signal_type = "MEDIUM_SHORT" # RSI + Aligned Sweep (without strong cluster support)
-                    decision_reasons.append("MEDIUM_SHORT (RSI + Sweep)")
+                    signal_type = "MEDIUM_SHORT"
+                    decision_reasons.append("MEDIUM_SHORT (RSI + Bearish Sweep)")
             elif cluster_dominance_score >= self.CONFIDENCE_HIGH_THRESHOLD and cluster_impact_score >= self.CONFIDENCE_MEDIUM_THRESHOLD:
-                signal_type = "MEDIUM_SHORT" # RSI + Dominant Cluster + Medium Impact
+                signal_type = "MEDIUM_SHORT"
                 decision_reasons.append("MEDIUM_SHORT (RSI + Dominant Cluster)")
-            elif rsi_score > 0: # RSI alone
+            elif rsi_score > 0:
                 signal_type = "LOW_CONFIDENCE_SHORT"
                 decision_reasons.append("LOW_CONFIDENCE_SHORT (RSI Only)")
             else:
                 signal_type = "NEUTRAL"
                 decision_reasons.append("NEUTRAL (RSI but no supporting factors)")
-        else: # RSI is NEUTRAL
+        else:
             signal_type = "NEUTRAL"
             decision_reasons.append("NEUTRAL (RSI Neutral)")
-
-        # Handle conflicting signals (sweep opposite to RSI direction)
-        if rsi_signal == "LONG" and is_sweep and actual_sweep_volume <= -self.config.MIN_SWEEP_VOLUME_USDT: # Bearish sweep opposite Long RSI
-            signal_type = "NEUTRAL"
-            decision_reasons.append("SIGNAL_CANCELLED (Bearish Sweep opposite Long RSI)")
-        elif rsi_signal == "SHORT" and is_sweep and actual_sweep_volume >= self.config.MIN_SWEEP_VOLUME_USDT: # Bullish sweep opposite Short RSI
-            signal_type = "NEUTRAL"
-            decision_reasons.append("SIGNAL_CANCELLED (Bullish Sweep opposite Short RSI)")
 
         # --- Log the comprehensive decision reasons ---
         logging.debug(f"[{symbol}] Signal Decision Process: {' | '.join(decision_reasons)}")
@@ -234,7 +242,8 @@ class SignalGenerator:
             "proximity_score": proximity_score,
             "cluster_dominance_score": cluster_dominance_score,
             "is_sweep": is_sweep,
-            "sweep_volume_usdt": actual_sweep_volume,
+            "bullish_sweep_volume": bullish_sweep_volume,
+            "bearish_sweep_volume": bearish_sweep_volume,
             "reason": " | ".join(decision_reasons) if decision_reasons else "No strong conditions"
         }
 
@@ -294,38 +303,35 @@ async def main():
         RSI_LENGTH = 18
         RSI_OVERSOLD = 34
         RSI_OVERBOUGHT = 77
-        W_RSI = 0.50
-        W_CLUSTER = 0.30
-        W_SWEEP = 0.15
-        W_PROX = 0.05
+        W_RSI = 0.455
+        W_CLUSTER = 0.273
+        W_SWEEP = 0.136
+        W_PROX = 0.045
+        W_DOMINANCE = 0.091
         BIN_MODE = "percent"
         BIN_PCT = 0.002
         BIN_ABS = 0.5
         SLIDING_WINDOW_S = 300
         SWEEP_THRESHOLD_FACTOR = 2.0
-        MIN_SWEEP_VOLUME_USDT = 50000.0 # Increased for more realistic simulation
-        W_DOMINANCE = 0.1 # New weight for cluster dominance
+        MIN_SWEEP_VOLUME_USDT = 50000.0
 
     class MockClusterAggregator:
         def __init__(self):
             pass
         
         def get_bin_strength_at(self, symbol, price):
-            # Mock implementation
             if symbol == "SOL/USDT" and price > 20.0 and price < 20.5:
-                return 1.5, 90.0 # Strong cluster, high percentile
+                return 1.5, 90.0
             return 0.2, 30.0
 
         def is_sweep_detected(self, symbol, current_price):
-            # Mock implementation
             if symbol == "SOL/USDT" and current_price > 20.0 and current_price < 20.5:
-                return True, 60000.0 # Sweep detected (bullish)
+                return True, 60000.0, 0.0  # Bullish sweep
             if symbol == "SOL/USDT" and current_price > 29.5 and current_price < 30.5:
-                return True, -70000.0 # Sweep detected (bearish, using negative for direction)
-            return False, 0.0
+                return True, 0.0, 70000.0  # Bearish sweep
+            return False, 0.0, 0.0
         
         def get_top_n_clusters(self, symbol: str, n: int) -> List[Dict]:
-            # Mock implementation
             if symbol == "SOL/USDT":
                 return [
                     {"centroid_price": 20.1, "volume": 1000.0},
@@ -340,16 +346,14 @@ async def main():
         'close': [10, 12, 15, 13, 11, 14, 16, 18, 17, 19, 20, 22, 21, 23, 25, 24, 26, 28, 27, 29, 30]
     }
     ohlcv_df = pd.DataFrame(data)
-    # Ensure enough data for RSI calculation
     ohlcv_df = pd.concat([ohlcv_df] * 5, ignore_index=True)
-    ohlcv_df['close'] = ohlcv_df['close'].astype(float) # Explicitly cast to float
-
+    ohlcv_df['close'] = ohlcv_df['close'].astype(float)
 
     mock_config = MockConfig()
     mock_cluster_aggregator = MockClusterAggregator()
     signal_generator = SignalGenerator(mock_config, mock_cluster_aggregator)
 
-    # Scenario 1: Strong LONG signal (RSI oversold, bullish sweep, dominant cluster)
+    # Scenario 1: Strong LONG signal
     print("--- Scenario 1: Strong LONG ---")
     mock_cluster_snapshot_long = {
         "clusters": [
@@ -357,19 +361,16 @@ async def main():
             {"centroid_price": 19.5, "volume": 500.0},
         ]
     }
-    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 0.1 # Make RSI strongly oversold (e.g., < 34)
+    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 0.1
     signal = signal_generator.decide(
-        symbol="SOL/USDT",
-        current_price=20.1,
-        ohlcv_df=ohlcv_df.copy(),
-        cluster_snapshot=mock_cluster_snapshot_long,
-        is_liquidation_data_available=True,
-        is_sweep=True,
-        actual_sweep_volume=60000.0 # Simulating a bullish sweep
+        symbol="SOL/USDT", current_price=20.1,
+        ohlcv_df=ohlcv_df.copy(), cluster_snapshot=mock_cluster_snapshot_long,
+        is_liquidation_data_available=True, is_sweep=True,
+        bullish_sweep_volume=60000.0, bearish_sweep_volume=0.0
     )
     print(signal)
 
-    # Scenario 2: Strong SHORT signal (RSI overbought, bearish sweep, dominant cluster)
+    # Scenario 2: Strong SHORT signal
     print("\n--- Scenario 2: Strong SHORT ---")
     mock_cluster_snapshot_short = {
         "clusters": [
@@ -377,67 +378,54 @@ async def main():
             {"centroid_price": 30.5, "volume": 600.0},
         ]
     }
-    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 90.0 # Make RSI strongly overbought (e.g., > 77)
+    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 90.0
     signal = signal_generator.decide(
-        symbol="SOL/USDT",
-        current_price=29.9,
-        ohlcv_df=ohlcv_df.copy(),
-        cluster_snapshot=mock_cluster_snapshot_short,
-        is_liquidation_data_available=True,
-        is_sweep=True,
-        actual_sweep_volume=-70000.0 # Simulating a bearish sweep
+        symbol="SOL/USDT", current_price=29.9,
+        ohlcv_df=ohlcv_df.copy(), cluster_snapshot=mock_cluster_snapshot_short,
+        is_liquidation_data_available=True, is_sweep=True,
+        bullish_sweep_volume=0.0, bearish_sweep_volume=70000.0
     )
     print(signal)
 
-    # Scenario 3: Neutral (RSI not signaling)
+    # Scenario 3: Neutral
     print("\n--- Scenario 3: Neutral ---")
-    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 25.0 # Make RSI neutral
+    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 25.0
     signal = signal_generator.decide(
-        symbol="SOL/USDT",
-        current_price=25.0,
-        ohlcv_df=ohlcv_df.copy(),
-        cluster_snapshot=mock_cluster_snapshot_long,
+        symbol="SOL/USDT", current_price=25.0,
+        ohlcv_df=ohlcv_df.copy(), cluster_snapshot=mock_cluster_snapshot_long,
         is_liquidation_data_available=True
     )
     print(signal)
 
     # Scenario 4: RSI only fallback (LONG)
     print("\n--- Scenario 4: RSI Only Fallback (LONG) ---")
-    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 0.1 # Make RSI strongly oversold
+    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 0.1
     signal = signal_generator.decide(
-        symbol="SOL/USDT",
-        current_price=20.0,
-        ohlcv_df=ohlcv_df.copy(),
-        cluster_snapshot={}, # No cluster data
+        symbol="SOL/USDT", current_price=20.0,
+        ohlcv_df=ohlcv_df.copy(), cluster_snapshot={},
         is_liquidation_data_available=False
     )
     print(signal)
 
-    # Scenario 5: RSI LONG but opposite BEARISH sweep (should be neutral/cancelled)
+    # Scenario 5: RSI LONG but opposite BEARISH sweep
     print("\n--- Scenario 5: RSI LONG but opposite BEARISH sweep ---")
-    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 0.1 # Make RSI strongly oversold
+    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 0.1
     signal = signal_generator.decide(
-        symbol="SOL/USDT",
-        current_price=30.0, # Price where bearish sweep is detected
-        ohlcv_df=ohlcv_df.copy(),
-        cluster_snapshot=mock_cluster_snapshot_long,
-        is_liquidation_data_available=True,
-        is_sweep=True,
-        actual_sweep_volume=-70000.0 # Simulating a bearish sweep
+        symbol="SOL/USDT", current_price=30.0,
+        ohlcv_df=ohlcv_df.copy(), cluster_snapshot=mock_cluster_snapshot_long,
+        is_liquidation_data_available=True, is_sweep=True,
+        bullish_sweep_volume=0.0, bearish_sweep_volume=70000.0
     )
     print(signal)
 
-    # Scenario 6: RSI SHORT but opposite BULLISH sweep (should be neutral/cancelled)
+    # Scenario 6: RSI SHORT but opposite BULLISH sweep
     print("\n--- Scenario 6: RSI SHORT but opposite BULLISH sweep ---")
-    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 90.0 # Make RSI strongly overbought
+    ohlcv_df.loc[ohlcv_df.index[-1], 'close'] = 90.0
     signal = signal_generator.decide(
-        symbol="SOL/USDT",
-        current_price=20.1, # Price where bullish sweep is detected (aligned with mock)
-        ohlcv_df=ohlcv_df.copy(),
-        cluster_snapshot=mock_cluster_snapshot_short,
-        is_liquidation_data_available=True,
-        is_sweep=True,
-        actual_sweep_volume=60000.0 # Simulating a bullish sweep
+        symbol="SOL/USDT", current_price=20.1,
+        ohlcv_df=ohlcv_df.copy(), cluster_snapshot=mock_cluster_snapshot_short,
+        is_liquidation_data_available=True, is_sweep=True,
+        bullish_sweep_volume=60000.0, bearish_sweep_volume=0.0
     )
     print(signal)
 

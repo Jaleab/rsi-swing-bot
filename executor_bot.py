@@ -445,18 +445,19 @@ async def market_loop(
                     continue
 
                 cluster_snapshot = cluster_aggregator.get_snapshot(symbol)
-                is_sweep, actual_sweep_volume = cluster_aggregator.is_sweep_detected(symbol, current_price)
+                is_sweep, bullish_sweep_volume, bearish_sweep_volume = cluster_aggregator.is_sweep_detected(symbol, current_price)
                 is_liquidation_data_available = cluster_aggregator.initial_data_ready_event.is_set()
 
                 logger.debug(f"[{symbol}] Calling signal_generator.decide with current_price={current_price}, ohlcv_df_empty={df.empty}, is_liquidation_data_available={is_liquidation_data_available}, is_sweep={is_sweep}")
-                signal_data = signal_generators[symbol].decide( # Use specific signal generator
+                signal_data = signal_generators[symbol].decide(
                     symbol=symbol,
                     current_price=current_price,
                     ohlcv_df=df,
                     cluster_snapshot=cluster_snapshot,
                     is_liquidation_data_available=is_liquidation_data_available,
                     is_sweep=is_sweep,
-                    actual_sweep_volume=actual_sweep_volume
+                    bullish_sweep_volume=bullish_sweep_volume,
+                    bearish_sweep_volume=bearish_sweep_volume
                 )
 
                 signal_type = signal_data.get('signal_type')

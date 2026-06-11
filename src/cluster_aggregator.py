@@ -19,7 +19,8 @@ class ClusterAggregator:
         self.config = config
         self.status_tracker = status_tracker
         self.event_queue = event_queue # Unified event queue (optional, used in live mode)
-        self.bins: Dict[str, Dict[int, Dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: {"volume": 0.0, "last_update": 0, "events": 0}))
+        self.bins: Dict[str, Dict[int, Dict[str, float]]] = defaultdict(
+            lambda: defaultdict(lambda: {"volume": 0.0, "bullish_volume": 0.0, "bearish_volume": 0.0, "last_update": 0, "events": 0}))
         self.events_deque: Dict[str, Deque[LiquidationEvent]] = defaultdict(lambda: deque())
         self.last_save_time = time.time()
 
@@ -64,6 +65,10 @@ class ClusterAggregator:
         self.bins[symbol][bin_idx]["volume"] += event.qty_usdt
         self.bins[symbol][bin_idx]["last_update"] = event.timestamp
         self.bins[symbol][bin_idx]["events"] += 1
+        if event.side == "LONG":       # Longs liquidated = forced selling = bearish
+            self.bins[symbol][bin_idx]["bearish_volume"] += event.qty_usdt
+        elif event.side == "SHORT":    # Shorts liquidated = forced buying = bullish
+            self.bins[symbol][bin_idx]["bullish_volume"] += event.qty_usdt
 
         self._expire_old_events(symbol, current_time_ms_override=event.timestamp) # Pass event timestamp
 
@@ -105,6 +110,10 @@ class ClusterAggregator:
             if old_bin_idx in self.bins[symbol]:
                 self.bins[symbol][old_bin_idx]["volume"] -= old_event.qty_usdt
                 self.bins[symbol][old_bin_idx]["events"] -= 1
+                if old_event.side == "LONG":
+                    self.bins[symbol][old_bin_idx]["bearish_volume"] -= old_event.qty_usdt
+                elif old_event.side == "SHORT":
+                    self.bins[symbol][old_bin_idx]["bullish_volume"] -= old_event.qty_usdt
 
                 if self.bins[symbol][old_bin_idx]["volume"] <= 0 or self.bins[symbol][old_bin_idx]["events"] <= 0:
                     del self.bins[symbol][old_bin_idx]
@@ -184,10 +193,10 @@ class ClusterAggregator:
         logger.debug(f"[{symbol}] _get_approx_current_price returning default 1.0 (no mark_price or events)")
         return 1.0
 
-    def is_sweep_detected(self, symbol: str, current_price: float, current_time_ms_override: Optional[int] = None) -> Tuple[bool, float]:
+    def is_sweep_detected(self, symbol: str, current_price: float, current_time_ms_override: Optional[int] = None) -> Tuple[bool, float, float]:
         """
         Checks if a liquidation sweep is detected at the current price.
-        A sweep is a short, concentrated burst of liquidation volume at a bin while price touches or crosses that bin.
+        Returns (is_sweep, bullish_volume, bearish_volume) — directional sweep volumes.
         """
         bin_idx = self._price_to_bin(symbol, current_price)
         
@@ -198,7 +207,9 @@ class ClusterAggregator:
             and self._price_to_bin(symbol, event.price) == bin_idx
         ]
         
-        recent_volume = sum(event.qty_usdt for event in sweep_window_events)
+        bullish_volume = sum(e.qty_usdt for e in sweep_window_events if e.side == "SHORT")
+        bearish_volume = sum(e.qty_usdt for e in sweep_window_events if e.side == "LONG")
+        recent_volume = bullish_volume + bearish_volume
 
         historical_events = [
             event for event in self.events_deque[symbol]
@@ -221,8 +232,8 @@ class ClusterAggregator:
         bin_end_price = (bin_idx + 1) * bin_size
         price_touch_condition = bin_start_price <= current_price < bin_end_price
 
-        logger.debug(f"[{symbol}] Sweep detection for bin {bin_idx} (price {current_price}): recent_volume={recent_volume}, historical_avg={historical_avg}, is_sweep={is_sweep}, price_touch_condition={price_touch_condition}")
-        return is_sweep and price_touch_condition, recent_volume
+        logger.debug(f"[{symbol}] Sweep detection: bullish={bullish_volume:.2f}, bearish={bearish_volume:.2f}, is_sweep={is_sweep}")
+        return is_sweep and price_touch_condition, bullish_volume, bearish_volume
 
     def get_snapshot(self, symbol: str, current_time_ms_override: Optional[int] = None) -> Dict:
         """
@@ -239,6 +250,8 @@ class ClusterAggregator:
             clusters.append({
                 "bin_idx": bin_idx,
                 "volume": data["volume"],
+                "bullish_volume": data.get("bullish_volume", 0.0),
+                "bearish_volume": data.get("bearish_volume", 0.0),
                 "centroid_price": approx_price,
                 "last_update": data["last_update"],
                 "events_count": data["events"]
@@ -267,9 +280,17 @@ class ClusterAggregator:
                 with open(filepath, 'r') as f:
                     state_data = json.load(f)
                     
-                    self.bins = defaultdict(lambda: defaultdict(lambda: {"volume": 0.0, "last_update": 0, "events": 0}),
-                                            {s: defaultdict(lambda: {"volume": 0.0, "last_update": 0, "events": 0}, b)
+                    self.bins = defaultdict(lambda: defaultdict(lambda: {"volume": 0.0, "bullish_volume": 0.0, "bearish_volume": 0.0, "last_update": 0, "events": 0}),
+                                            {s: defaultdict(lambda: {"volume": 0.0, "bullish_volume": 0.0, "bearish_volume": 0.0, "last_update": 0, "events": 0}, b)
                                              for s, b in state_data.get("bins", {}).items()})
+                    # Migrate old state without directional volumes
+                    for symbol in self.bins:
+                        for bin_idx in self.bins[symbol]:
+                            bin_data = self.bins[symbol][bin_idx]
+                            if "bullish_volume" not in bin_data:
+                                bin_data["bullish_volume"] = 0.0
+                            if "bearish_volume" not in bin_data:
+                                bin_data["bearish_volume"] = 0.0
                     
                     for symbol, events_list in state_data.get("events_deque", {}).items():
                         self.events_deque[symbol] = deque(

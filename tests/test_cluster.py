@@ -107,7 +107,7 @@ async def test_is_sweep_detected(cluster_aggregator_instance):
     # Test no sweep (low volume)
     low_volume_price = 102.0 # Define low_volume_price
     # is_sweep_detected expects current_price, not bin_idx and price
-    is_sweep, actual_sweep_volume = aggregator.is_sweep_detected(symbol, low_volume_price)
+    is_sweep, bullish, bearish = aggregator.is_sweep_detected(symbol, low_volume_price)
     assert not is_sweep # Expect no sweep
 
 @pytest.mark.asyncio

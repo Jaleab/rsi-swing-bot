@@ -51,7 +51,7 @@ def test_decide_signals(signal_generator_instance, rsi_signal_direction, current
         {"centroid_price": current_price * 0.999, "volume": 1000.0},
         {"centroid_price": current_price * 1.001, "volume": 500.0},
     ]
-    signal_generator_instance.cluster_aggregator.is_sweep_detected.return_value = (sweep_volume > 0, abs(sweep_volume))
+    signal_generator_instance.cluster_aggregator.is_sweep_detected.return_value = (sweep_volume > 0, abs(sweep_volume) if sweep_volume > 0 else 0, abs(sweep_volume) if sweep_volume < 0 else 0)
 
     # Create a dummy DataFrame and directly set RSI values for precise testing
     ohlcv_df = pd.DataFrame({'close': [100.0] * 100}) # Need enough data for RSI calculation
@@ -84,7 +84,8 @@ def test_decide_signals(signal_generator_instance, rsi_signal_direction, current
         cluster_snapshot=mock_cluster_snapshot,
         is_liquidation_data_available=True,
         is_sweep=(sweep_volume != 0),
-        actual_sweep_volume=sweep_volume
+        bullish_sweep_volume=max(sweep_volume, 0) if sweep_volume > 0 else 0.0,
+        bearish_sweep_volume=abs(sweep_volume) if sweep_volume < 0 else 0.0
     )
 
     assert signal_output["signal_type"] == expected_signal_type
@@ -101,8 +102,9 @@ def test_decide_signals(signal_generator_instance, rsi_signal_direction, current
     else:
         assert signal_output["confidence_score"] > 0.0 # Should have some confidence if not neutral
     
-    # The actual_sweep_volume is passed directly, so we check that
-    assert signal_output["sweep_volume_usdt"] == abs(sweep_volume) # sweep_volume_usdt is always positive
+    # Sweep volume is passed as directional components; check total
+    total_sweep = signal_output.get("bullish_sweep_volume", 0) + signal_output.get("bearish_sweep_volume", 0)
+    assert total_sweep == abs(sweep_volume)
     assert signal_output["cluster_impact_score"] >= expected_cluster_impact_score_min # Check minimum impact score
 
 
@@ -123,7 +125,8 @@ def test_decide_fallback_rsi(signal_generator_instance):
         cluster_snapshot={"clusters": []}, # Provide an empty cluster snapshot
         is_liquidation_data_available=False,
         is_sweep=False,
-        actual_sweep_volume=0.0
+        bullish_sweep_volume=0.0,
+        bearish_sweep_volume=0.0
     )
 
     assert signal_output["signal_type"] == "LOW_CONFIDENCE_LONG"

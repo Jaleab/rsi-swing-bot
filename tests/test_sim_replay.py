@@ -112,10 +112,10 @@ async def test_synthetic_sweep_detection(sim_generator: SimEventsGenerator, clus
     evaluation_time_ms = events_to_ingest[-1].timestamp + 100 # A little after the last event
     
     # Check for sweep detection
-    is_sweep, actual_sweep_volume = cluster_aggregator.is_sweep_detected(symbol, test_price, current_time_ms_override=evaluation_time_ms)
+    is_sweep, bullish, bearish = cluster_aggregator.is_sweep_detected(symbol, test_price, current_time_ms_override=evaluation_time_ms)
 
     assert is_sweep is True, "Sweep should be detected"
-    assert actual_sweep_volume >= test_volume * 0.9, "Detected sweep volume should be close to generated volume"
+    assert (bullish + bearish) >= test_volume * 0.9, "Detected sweep volume should be close to generated volume"
 
     # Test with insufficient volume
     low_volume_events_to_ingest = []
@@ -142,7 +142,7 @@ async def test_synthetic_sweep_detection(sim_generator: SimEventsGenerator, clus
 
     evaluation_time_low_volume_ms = low_volume_events_to_ingest[-1].timestamp + 100
 
-    is_sweep_low, actual_sweep_volume_low = cluster_aggregator.is_sweep_detected(symbol, low_volume_test_price, current_time_ms_override=evaluation_time_low_volume_ms)
+    is_sweep_low, _, _ = cluster_aggregator.is_sweep_detected(symbol, low_volume_test_price, current_time_ms_override=evaluation_time_low_volume_ms)
     assert is_sweep_low is False, "Sweep should NOT be detected with insufficient volume"
 
 @pytest.mark.asyncio

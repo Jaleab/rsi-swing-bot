@@ -121,7 +121,8 @@ class BacktestEngine:
 
                 # --- Incorporate sweep data into signal generation ---
                 is_sweep=self.cluster_reconstructor.current_sweep_data.get('is_sweep', False),
-                actual_sweep_volume=self.cluster_reconstructor.current_sweep_data.get('actual_sweep_volume', 0.0)
+                bullish_sweep_volume=self.cluster_reconstructor.current_sweep_data.get('bullish_sweep_volume', 0.0),
+                bearish_sweep_volume=self.cluster_reconstructor.current_sweep_data.get('bearish_sweep_volume', 0.0)
             )
 
             # --- Trading Logic (using PositionManager) ---
@@ -206,7 +207,7 @@ class BacktestEngine:
             'proximity_score': signal['proximity_score'],
             'cluster_dominance_score': signal['cluster_dominance_score'],
             'is_sweep': signal['is_sweep'],
-            'sweep_volume_usdt': signal['sweep_volume_usdt'],
+            'sweep_volume_usdt': (signal.get('bullish_sweep_volume', 0) + signal.get('bearish_sweep_volume', 0)),
         }
         self.signal_log.append(signal_entry)
 
@@ -236,7 +237,7 @@ class BacktestEngine:
             'proximity_score': signal['proximity_score'],
             'cluster_dominance_score': signal['cluster_dominance_score'],
             'is_sweep': signal['is_sweep'],
-            'sweep_volume_usdt': signal['sweep_volume_usdt'],
+            'sweep_volume_usdt': (signal.get('bullish_sweep_volume', 0) + signal.get('bearish_sweep_volume', 0)),
         }
         self.signal_log.append(signal_entry)
 
