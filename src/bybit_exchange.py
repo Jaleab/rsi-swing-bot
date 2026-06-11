@@ -177,20 +177,24 @@ class BybitExchangeClient(AbstractExchangeClient):
             logging.error(f"An unexpected error occurred while fetching recent trades: {e}")
             return []
 
-    async def fetch_ohlcv(self, symbol: str, timeframe: str, since: Optional[int] = None, limit: Optional[int] = None) -> List[List[float]]:
+    async def fetch_ohlcv(self, symbol: str, timeframe: str, status_tracker: Any = None, limit: Optional[int] = None) -> pd.DataFrame:
         """
         Fetches OHLCV data for a given symbol and timeframe.
+        status_tracker param is accepted for interface consistency with PaperTrader.
         """
         if Config.SIM_MODE:
-            # In SIM_MODE, return an empty list or simulated data
             logging.info(f"[{symbol}] SIM_MODE: Returning empty OHLCV data.")
-            return pd.DataFrame() # Return empty DataFrame instead of empty list
+            return pd.DataFrame()
             
         try:
+            since = int(status_tracker.status.get(symbol).last_update_ms) - (limit * 60000) if status_tracker and limit else None
             ohlcv = await self._retry_api_call(self.exchange.fetch_ohlcv, symbol, timeframe, since, limit)
             if ohlcv is None:
-                return []
-            return ohlcv
+                return pd.DataFrame()
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            return df
         except Exception as e:
-            logging.error(f"An unexpected error occurred while fetching OHLCV for {symbol}: {e}")
-            return []
+            logging.error(f"Error fetching OHLCV for {symbol}: {e}")
+            return pd.DataFrame()

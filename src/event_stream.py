@@ -28,18 +28,17 @@ class EventStream:
         self.running = False
 
     async def start(self):
-        """Starts the event stream, primarily WebSocket consumers for live mode."""
+        """Starts background WebSocket consumers and queue processing for live mode."""
         if not self.config.SIM_MODE:
             self.running = True
-            await asyncio.gather(
-                self.trade_stream_manager.trade_ws_consumer(self.status_tracker),
-                self.order_book_manager.orderbook_ws_consumer(self.status_tracker), # Pass status_tracker here
-                self.cluster_aggregator.periodic_save(), # Start periodic saving for live mode
-                self.cluster_aggregator._run_queue_consumer() # Start the queue consumer for live mode
-            )
+            asyncio.create_task(self.trade_stream_manager.trade_ws_consumer(self.status_tracker))
+            asyncio.create_task(self.order_book_manager.orderbook_ws_consumer(self.status_tracker))
+            asyncio.create_task(self.cluster_aggregator.periodic_save())
+            asyncio.create_task(self.cluster_aggregator._run_queue_consumer())
+            logger.info("EventStream started — WebSocket consumers running in background.")
         else:
-            self.running = True # Still set running to True for consistency, though it won't do much in sim mode
-            logger.info("EventStream is in SIM_MODE. WebSocket consumers and queue processing are bypassed.")
+            self.running = True
+            logger.info("EventStream is in SIM_MODE. WebSocket consumers bypassed.")
 
     async def stop(self):
         """Stops the event stream."""
