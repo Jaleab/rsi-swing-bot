@@ -201,6 +201,23 @@ class PositionManager:
             logging.info(f"[{symbol}] Position removed from tracking.")
             self.metrics_exporter.update_open_positions_count(self.get_total_open_positions())
 
+    def calculate_position_size(self, balance: float, entry_price: float, signal_type: str) -> float:
+        """Calculates position size in base currency based on balance, risk, and signal."""
+        if balance <= 0 or entry_price <= 0:
+            logging.warning(f"Invalid balance ({balance}) or entry price ({entry_price}) for position sizing.")
+            return 0.0
+
+        usdt_to_invest = self.config.POSITION_USDT if self.config.POSITION_USDT > 0 else balance * self.config.RISK_PER_TRADE_PERCENT
+        usdt_to_invest = min(usdt_to_invest, balance)
+
+        if usdt_to_invest < self.config.MIN_POSITION_SIZE_USDT:
+            logging.warning(f"Calculated position size {usdt_to_invest:.2f} USDT below minimum {self.config.MIN_POSITION_SIZE_USDT}")
+            return 0.0
+
+        quantity = usdt_to_invest / entry_price
+        logging.info(f"Position size: {quantity:.6f} units ({usdt_to_invest:.2f} USDT) for {signal_type}")
+        return quantity
+
     def can_open_position_for_symbol(self, symbol: str) -> GuardResult:
         """
         Checks if a new position can be opened for a specific symbol based on

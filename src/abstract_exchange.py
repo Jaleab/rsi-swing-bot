@@ -134,6 +134,16 @@ class AbstractExchangeClient(abc.ABC):
         pass
 
     @abc.abstractmethod
+    async def execute_order(self, symbol: str, order_type: str, side: str,
+                            amount: float, price: Optional[float] = None,
+                            position_id: Optional[str] = None,
+                            params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Executes an order on the exchange. Wraps place_order with additional semantics.
+        """
+        pass
+
+    @abc.abstractmethod
     async def fetch_ohlcv(self, symbol: str, timeframe: str, since: Optional[int] = None, limit: Optional[int] = None) -> List[List[float]]:
         """
         Fetches OHLCV data for a given symbol and timeframe.

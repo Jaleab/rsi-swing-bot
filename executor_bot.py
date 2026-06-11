@@ -498,11 +498,11 @@ async def market_loop(
                         logger.debug(f"Recorded signal: {signal_type} for {symbol}")
 
                     # Update last signal timestamp regardless of whether a position is opened
-                    s.last_signal_timestamp = current_time_ms / 1000 # Use event timestamp for simulation consistency
+                    s.last_signal_timestamp = current_time_ms / 1000
 
                     # --- Guardrail Checks for Signal Processing ---
                     decision_meta = {
-                        "decision": "EXECUTED", # Default to executed, will be updated if blocked
+                        "decision": "EXECUTED",
                         "block_guard": None,
                         "block_reason": None,
                         "cooldown_active": False,
@@ -518,13 +518,13 @@ async def market_loop(
                             "block_guard": guard_result.guard_name,
                             "block_reason": guard_result.reason,
                         })
-                    elif not position_manager.has_open_position(symbol): # Only enter if no existing position
+                    elif not position_manager.has_open_position(symbol):
                         # Check for signal cooldown
                         if (current_time_ms / 1000 - s.last_signal_timestamp < Config.SIGNAL_COOLDOWN_SECONDS) and (s.last_signal_type == signal_type):
                             guard_result = GuardResult(
                                 allowed=False,
                                 reason=f"Signal '{signal_type}' ignored due to cooldown.",
-                                guard_name="SIGNAL_COOLDown",
+                                guard_name="SIGNAL_COOLDOWN",
                                 details=f"Last signal of same type was {current_time_ms / 1000 - s.last_signal_timestamp:.2f}s ago (min {Config.SIGNAL_COOLDOWN_SECONDS}s)."
                             )
                             status_tracker.update_guard_metrics(symbol, guard_result)
@@ -536,20 +536,16 @@ async def market_loop(
                                 "cooldown_active": True,
                             })
                         else:
-                            # Evaluate other guardrails
+                            # Evaluate guardrails via signal_generator.check_guardrails()
                             guard_results = signal_generators[symbol].check_guardrails(
-                                symbol,
-                                signal_type,
-                                confidence_score,
-                                s.mark_price,
-                                cluster_snapshot,
-                                ohlcv_dataframes[symbol]
+                                symbol, signal_type, confidence_score,
+                                s.mark_price, cluster_snapshot, ohlcv_dataframes.get(symbol, pd.DataFrame())
                             )
 
                             allowed_by_guardrails = all(gr.allowed for gr in guard_results)
-                            
+
                             for gr in guard_results:
-                                status_tracker.update_guard_metrics(symbol, gr) # Update metrics for all guards
+                                status_tracker.update_guard_metrics(symbol, gr)
                                 if not gr.allowed:
                                     logger.warning(f"[{symbol}] Trade for signal {signal_type} blocked by guardrail: {gr.guard_name}. Reason: {gr.reason}")
                                     status_tracker.update_status(symbol, notes=f"BLOCKED_TRADE ({gr.guard_name})")
@@ -558,73 +554,27 @@ async def market_loop(
                                         "block_guard": gr.guard_name,
                                         "block_reason": gr.reason,
                                     })
-                                    break # Blocked by one guard is enough
+                                    break
 
                             if allowed_by_guardrails:
                                 logger.info(f"[{symbol}] Signal {signal_type} allowed by all guardrails.")
                                 status_tracker.update_status(symbol, notes="TRADE_ALLOWED")
-                            
-                                # --- Step 4: Execute Trade ---
-                                # Determine position size based on balance and risk parameters
-                                balance = await get_account_balance(exchange_client)
-                                if balance <= 0:
-                                    logger.error(f"[{symbol}] Insufficient balance ({balance} USDT) to open position. Skipping trade.")
-                                    status_tracker.update_status(symbol, notes="INSUFFICIENT_BALANCE")
-                                    decision_meta.update({
-                                        "decision": "BLOCKED",
-                                        "block_reason": "Insufficient balance",
-                                    })
-                                else:
-                                    entry_price = s.mark_price
-                                    position_size = position_manager.calculate_position_size(
-                                        balance, entry_price, signal_type
-                                    )
 
-                                    if position_size > 0:
-                                        # Execute the order (PaperTrader will simulate this)
-                                        order = await exchange_client.execute_order(
-                                            symbol=symbol,
-                                            order_type='market',
-                                            side='buy' if signal_type == 'LONG' else 'sell',
-                                            amount=position_size,
-                                            price=entry_price, # Mark price as entry price for market order
-                                            position_id=str(uuid.uuid4()) # Generate a unique position_id
-                                        )
+                                # Determine signal direction
+                                is_long = 'LONG' in signal_type and signal_type != 'NEUTRAL'
+                                is_short = 'SHORT' in signal_type and signal_type != 'NEUTRAL'
+                                signal_direction = 'buy' if is_long else 'sell'
 
-                                        if order and order.get('status') == 'closed': # PaperTrader returns 'closed' immediately
-                                            # Create a new position object and add it to the PositionManager
-                                            position = Position(
-                                                symbol=symbol,
-                                                position_type=signal_type,
-                                                entry_price=float(order['price']),
-                                                size=float(order['amount']),
-                                                timestamp=order['timestamp'],
-                                                # target_price, stop_price will be set by PositionManager or SignalGenerator
-                                            )
-                                            # Set target and stop prices based on signal_data
-                                            position.target_price = signal_data.get('target_price')
-                                            position.stop_price = signal_data.get('stop_price')
-                                            
-                                            position_manager.add_position(symbol, position)
-                                            logger.info(f"[{symbol}] Position opened: {position}")
-                                            metrics_exporter.bot_open_positions_count.set(position_manager.get_total_open_positions())
-                                            metrics_exporter.update_cumulative_pnl(position.realized_pnl) # Initialize with 0
-                                            status_tracker.update_status(symbol, notes="POSITION_OPENED")
-                                        else:
-                                            logger.error(f"[{symbol}] Failed to execute order for {signal_type} signal. Order details: {order}")
-                                            status_tracker.increment_error(symbol)
-                                            status_tracker.update_status(symbol, notes="ORDER_FAILED")
-                                            decision_meta.update({
-                                                "decision": "BLOCKED",
-                                                "block_reason": "Order execution failed",
-                                            })
-                                    else:
-                                        logger.warning(f"[{symbol}] Calculated position size was zero or negative ({position_size}). Skipping trade.")
-                                        status_tracker.update_status(symbol, notes="ZERO_POSITION_SIZE")
-                                        decision_meta.update({
-                                            "decision": "BLOCKED",
-                                            "block_reason": "Zero or negative position size",
-                                        })
+                                # Route through PositionManager.open_position() for proper SL/TP + guard enforcement
+                                await position_manager.open_position(
+                                    symbol=symbol,
+                                    signal_direction=signal_direction,
+                                    current_price=s.mark_price,
+                                    exchange_client=exchange_client,
+                                    order_type='market',
+                                    signal_stats_tracker=signal_stats_trackers[symbol],
+                                    cluster_snapshot=cluster_snapshot
+                                )
                     else:
                         logger.info(f"[{symbol}] Already has an open position. Skipping new {signal_type} signal.")
                         status_tracker.update_status(symbol, notes="POSITION_EXISTS")
@@ -802,11 +752,12 @@ async def main():
     # 9. Initialize EventStream (only in live mode)
     event_stream: Optional[EventStream] = None
     if not Config.SIM_MODE:
+        event_queue = asyncio.Queue()
         event_stream = EventStream(
-            Config.DEFAULT_SYMBOLS_RSI_SWING_BOT, 
-            Config.BYBIT_WS_URL, 
-            Config.BINANCE_WS_URL, 
-            cluster_aggregator
+            event_queue,
+            cluster_aggregator,
+            Config,
+            status_tracker
         )
         logger.info("Calling event_stream.start()...")
         await event_stream.start() # Start the event stream and its consumers
@@ -818,13 +769,6 @@ async def main():
     monitor_thread.daemon = True
     monitor_thread.start()
 
-
-    # Initialize components
-    status_tracker = StatusTracker(Config.SYMBOLS)
-    signal_stats_trackers: Dict[str, SignalStatsTracker] = {symbol: SignalStatsTracker(symbol) for symbol in Config.SYMBOLS}
-    
-    # Initialize PositionManager
-    position_managers = {symbol: PositionManager(config=Config, exchange_client=exchange_client, metrics_exporter_obj=metrics_exporter_instance, status_tracker=status_tracker) for symbol in Config.SYMBOLS}
 
     # Start a background task for updating resource metrics if not in simulation mode
     metrics_update_task = None

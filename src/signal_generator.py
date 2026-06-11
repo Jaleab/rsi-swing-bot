@@ -5,7 +5,8 @@ import numpy as np
 
 from .config import Config
 from .rsi_calc import calculate_rsi, get_rsi_signal
-from .cluster_aggregator import ClusterAggregator # Assuming ClusterAggregator is available
+from .cluster_aggregator import ClusterAggregator
+from .guards import GuardResult
 
 class SignalGenerator:
     def __init__(self, config: Config, cluster_aggregator: ClusterAggregator):
@@ -235,6 +236,26 @@ class SignalGenerator:
             "sweep_volume_usdt": actual_sweep_volume,
             "reason": " | ".join(decision_reasons) if decision_reasons else "No strong conditions"
         }
+
+    def check_guardrails(self, symbol: str, signal_type: str, confidence_score: float,
+                         current_price: float, cluster_snapshot: Dict,
+                         ohlcv_df: pd.DataFrame) -> List['GuardResult']:
+        """Validates a signal against guardrail checks. Returns GuardResult list."""
+        guard_results = [
+            GuardResult(
+                allowed=confidence_score >= 0.3,
+                reason="Confidence above minimum" if confidence_score >= 0.3 else f"Confidence {confidence_score:.2f} below minimum 0.3",
+                guard_name="MIN_CONFIDENCE",
+                details=f"Symbol: {symbol}, Confidence: {confidence_score:.2f}"
+            ),
+            GuardResult(
+                allowed=ohlcv_df is not None and not ohlcv_df.empty,
+                reason="OHLCV data available" if (ohlcv_df is not None and not ohlcv_df.empty) else "No OHLCV data available for validation",
+                guard_name="DATA_AVAILABILITY",
+                details=f"Symbol: {symbol}"
+            ),
+        ]
+        return guard_results
 
     def check_exit_signal(
         self,

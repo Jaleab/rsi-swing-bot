@@ -111,6 +111,12 @@ class BybitExchangeClient(AbstractExchangeClient):
             logging.error(f"An unexpected error occurred while placing order: {e}")
             return {}
 
+    async def execute_order(self, symbol: str, order_type: str, side: str,
+                            amount: float, price: Optional[float] = None,
+                            position_id: Optional[str] = None,
+                            params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return await self.place_order(symbol, side, order_type, amount, price, params)
+
     async def cancel_order(self, order_id: str, symbol: str) -> Dict[str, Any]:
         try:
             canceled_order = await self._retry_api_call(self.exchange.cancel_order, order_id, symbol)

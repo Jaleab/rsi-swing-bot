@@ -112,6 +112,12 @@ class PaperTrader(AbstractExchangeClient):
         
         return {'status': 'failed', 'info': 'Unknown error'}
 
+    async def execute_order(self, symbol: str, order_type: str, side: str,
+                            amount: float, price: Optional[float] = None,
+                            position_id: Optional[str] = None,
+                            params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return await self.place_order(symbol, side, order_type, amount, price, params)
+
     async def cancel_order(self, order_id: str, symbol: str) -> Dict[str, Any]:
         """Simulates canceling an order."""
         logger.info(f"PaperTrader: Attempted to cancel order {order_id} for {symbol}. (Not fully implemented in basic PaperTrader as orders are assumed filled instantly).")
