@@ -3,33 +3,21 @@ services:
   bot:
     build:
       context: .
-      args:
-        CACHE_BUSTER: ${CACHE_BUSTER_VALUE}
-    container_name: trading_bot
+      dockerfile: Dockerfile
+    container_name: rsi_swing_bot
     ports:
-      - "8000:8000"
+      - "8000:8000"  # Prometheus metrics
     env_file:
-      - .env # This will pass environment variables from the host's .env file
+      - .env
     environment:
       - PYTHONUNBUFFERED=1
-      - LOG_LEVEL=DEBUG
-      - SIM_MODE=true # Force SIM_MODE to true
-      - BACKTEST_ENABLED=false
-      - USE_SIM_EVENTS_GENERATOR=true
-      - ORDERBOOK_WS_ENABLED=true
-      - TRADES_WS_ENABLED=true
-      - BYBIT_API_KEY=dummy_api_key
-      - BYBIT_API_SECRET=dummy_api_secret
-      - BYBIT_TESTNET=true
-      - ENABLE_MANUAL_SWEEP_INJECTION=${ENABLE_MANUAL_SWEEP_INJECTION}
-    command: ["python", "executor_bot.py", "--sim"]
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - SIM_MODE=${SIM_MODE:-false}
+      - BYBIT_TESTNET=${BYBIT_TESTNET:-true}
+      - BYBIT_SYMBOLS=${BYBIT_SYMBOLS:-SOL/USDT}
     volumes:
-      - .:/app # Mount the current directory into the container
-    deploy:
-      resources:
-        limits:
-          memory: 2048M # Increase memory limit to 2GB
-    restart: "no" # Set to "no" during backtesting to avoid continuous restarts
+      - ./data:/app/data  # Persistent data (trade logs, cluster state)
+    restart: unless-stopped  # Auto-restart on crash or host reboot
 
   prometheus:
     image: prom/prometheus:latest
