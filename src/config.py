@@ -96,7 +96,7 @@ class Config:
     STATUS_SNAPSHOT_INTERVAL_S: int = 10 # How often to save status snapshot to CSV in seconds
 
     # --- WebSocket Settings ---
-    BYBIT_LIQUIDATION_WS_ENABLED: bool = False # Not wired into EventStream yet
+    BYBIT_LIQUIDATION_WS_ENABLED: bool = True  # Now wired into EventStream
     BINANCE_LIQUIDATION_WS_ENABLED: bool = False
     ORDERBOOK_WS_ENABLED: bool = True # Enable orderbook WebSocket
     TRADES_WS_ENABLED: bool = True # Enable trades WebSocket
@@ -150,7 +150,7 @@ class Config:
     MAX_RECONNECT_ATTEMPTS: int = 10 # Maximum number of reconnection attempts for WebSockets
 
     # --- WebSocket URLs ---
-    BYBIT_WS_URL: str = "wss://stream.bybit.com/v5/public/linear"
+    BYBIT_WS_URL: str = "wss://stream-testnet.bybit.com/v5/public/linear" if os.environ.get("BYBIT_TESTNET", "False").lower() == "true" else "wss://stream.bybit.com/v5/public/linear"
     BINANCE_WS_URL: str = "wss://fstream.binance.com/ws"
 
     # --- Safe Mode Settings ---

@@ -4,6 +4,7 @@ from typing import List, AsyncGenerator, Union, Optional, Any
 
 from src.ws_trades import TradeStreamManager
 from src.ws_orderbook import OrderBookManager
+from src.ws_liquidation import bybit_ws_consumer
 from src.config import Config # Import Config to get symbols
 from src.events import SimulatedLiquidationEvent, OrderBookEvent, TradeEvent # Import from new events module
 from src.cluster_aggregator import ClusterAggregator
@@ -33,6 +34,7 @@ class EventStream:
             self.running = True
             asyncio.create_task(self.trade_stream_manager.trade_ws_consumer(self.status_tracker))
             asyncio.create_task(self.order_book_manager.orderbook_ws_consumer(self.status_tracker))
+            asyncio.create_task(bybit_ws_consumer(self.event_queue, self.config.SYMBOLS, self.status_tracker))
             asyncio.create_task(self.cluster_aggregator.periodic_save())
             asyncio.create_task(self.cluster_aggregator._run_queue_consumer())
             logger.info("EventStream started — WebSocket consumers running in background.")

@@ -13,8 +13,6 @@ from src.events import TradeEvent
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear"
-
 class TradeStreamManager:
     """Manages trade streams for multiple symbols and provides trade imbalance."""
     def __init__(self, symbols: List[str], queue: asyncio.Queue, status_tracker):
@@ -38,7 +36,7 @@ class TradeStreamManager:
         Connects to Bybit WebSocket, subscribes to public trade updates,
         and processes them. It uses the symbols initialized with the manager.
         """
-        uri = BYBIT_WS_URL
+        uri = Config.BYBIT_WS_URL
         reconnect_delay = 1
         max_reconnect_delay = 60
         reconnect_attempts = 0 # Initialize reconnect_attempts

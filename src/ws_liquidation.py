@@ -9,10 +9,6 @@ from typing import List # Import List
 import logging
 from src.config import Config
 
-# Assuming these are defined elsewhere or passed in config
-BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear"
-BINANCE_WS_URL = "wss://fstream.binance.com/ws" # Placeholder for Binance
-
 class LiquidationEvent:
     """
     Represents a single liquidation event from an exchange.
@@ -85,7 +81,8 @@ def normalize_bybit_event(raw_event):
         order_id=order_id
     )
 
-async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tracker): # Add status_tracker parameter
+async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tracker):
+    bybit_url = Config.BYBIT_WS_URL
     """
     Connects to Bybit liquidation stream, normalizes events, and puts them into the queue.
     Handles reconnects and deduplication.
@@ -96,7 +93,7 @@ async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tra
 
     while True:
         try:
-            async with websockets.connect(BYBIT_WS_URL) as ws:
+            async with websockets.connect(bybit_url) as ws:
                 logging.info(f"Bybit WebSocket connected. Subscribing to liquidations for {symbols}")
                 await ws.send(subscribe_message_for_allLiquidation(symbols))
                 reconnect_attempts = 0 # Reset attempts on successful connection
@@ -209,7 +206,7 @@ async def binance_ws_consumer(queue: asyncio.Queue, symbols: List[str]):
 
     while True:
         try:
-            async with websockets.connect(BINANCE_WS_URL) as ws:
+            async with websockets.connect(Config.BINANCE_WS_URL) as ws:
                 logging.info(f"Binance WebSocket connected. Subscribing to liquidations for {symbols}")
                 await ws.send(subscribe_message_binance_liquidation(symbols))
                 reconnect_attempts = 0 # Reset attempts on successful connection

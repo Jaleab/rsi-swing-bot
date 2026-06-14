@@ -15,8 +15,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO) # Set logger level back to INFO
 
-BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear"
-
 # Removed local OrderBookEvent class definition, now imported from src.events
 
 class OrderBook:
@@ -152,7 +150,7 @@ class OrderBookManager:
         Connects to Bybit WebSocket, subscribes to order book updates,
         and manages local order books. It uses the symbols initialized with the manager.
         """
-        uri = BYBIT_WS_URL
+        uri = Config.BYBIT_WS_URL
         reconnect_delay = 1
         max_reconnect_delay = 60
         reconnect_attempts = 0
