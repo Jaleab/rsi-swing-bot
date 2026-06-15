@@ -150,7 +150,10 @@ class Config:
     MAX_RECONNECT_ATTEMPTS: int = 10 # Maximum number of reconnection attempts for WebSockets
 
     # --- WebSocket URLs ---
-    BYBIT_WS_URL: str = "wss://stream-testnet.bybit.com/v5/public/linear" if os.environ.get("BYBIT_TESTNET", "False").lower() == "true" else "wss://stream.bybit.com/v5/public/linear"
+    # Always use mainnet WS for data (testnet has no liquidation activity)
+    WS_DATA_SOURCE: str = os.environ.get("WS_DATA_SOURCE", "mainnet")  # "mainnet" or "testnet"
+    _ws_base = "wss://stream.bybit.com/v5/public/linear" if WS_DATA_SOURCE == "mainnet" else "wss://stream-testnet.bybit.com/v5/public/linear"
+    BYBIT_WS_URL: str = _ws_base
     BINANCE_WS_URL: str = "wss://fstream.binance.com/ws"
 
     # --- Safe Mode Settings ---
