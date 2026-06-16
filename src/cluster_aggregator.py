@@ -26,6 +26,7 @@ class ClusterAggregator:
 
         # Event to signal that initial data has been processed for all symbols from all relevant queues
         self.initial_data_ready_event = asyncio.Event()
+        self._initial_data_first_received: float = 0.0  # timestamp when first event was received
         # Initialized based on Config.SYMBOLS
         self.initial_data_received_for_symbols = {symbol: {'liquidation': False, 'orderbook': False, 'trade': False} for symbol in self.config.SYMBOLS}
 
@@ -364,6 +365,10 @@ class ClusterAggregator:
             logger.debug(f"[process_event] Event received: {type(event).__name__} for symbol: {getattr(event, 'symbol', 'N/A')}")
             self.ingest(event)
             
+            # Track first event timestamp for timeout-based initial data ready
+            if self._initial_data_first_received == 0:
+                self._initial_data_first_received = time.time()
+            
             # In simulation mode, initial data ready event is set by the sim_events_generator
             # and there's no event_queue to get from.
             # This method is primarily for consuming pre-generated events.
@@ -432,6 +437,20 @@ class ClusterAggregator:
         """Checks if initial data has been received for all symbols across all relevant event types."""
         if not self.initial_data_ready_event.is_set():
             logger.debug(f"Checking if initial data is ready. Current state: {self.initial_data_received_for_symbols}")
+            
+            # Timeout: if any data received and 30s+ passed, mark remaining as received
+            if self._initial_data_first_received > 0:
+                elapsed = time.time() - self._initial_data_first_received
+                if elapsed > 30:
+                    for symbol in self.initial_data_received_for_symbols:
+                        for event_type in self.initial_data_received_for_symbols[symbol]:
+                            if not self.initial_data_received_for_symbols[symbol][event_type]:
+                                self.initial_data_received_for_symbols[symbol][event_type] = True
+                                logger.info(f"[{symbol}] {event_type} marked as received (30s timeout reached)")
+                    self.initial_data_ready_event.set()
+                    logger.info("Initial data ready (30s timeout).")
+                    return
+            
             all_symbols_ready = True
             for symbol, types_received in self.initial_data_received_for_symbols.items():
                 for event_type, received in types_received.items():
