@@ -36,7 +36,6 @@ class EventStream:
             asyncio.create_task(self.order_book_manager.orderbook_ws_consumer(self.status_tracker))
             asyncio.create_task(bybit_ws_consumer(self.event_queue, self.config.SYMBOLS, self.status_tracker))
             asyncio.create_task(self.cluster_aggregator.periodic_save())
-            asyncio.create_task(self.cluster_aggregator._run_queue_consumer())
             logger.info("EventStream started — WebSocket consumers running in background.")
         else:
             self.running = True
