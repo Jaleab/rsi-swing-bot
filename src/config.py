@@ -35,7 +35,7 @@ class Config:
     MAX_DRAWDOWN_PCT: float = float(os.environ.get("MAX_DRAWDOWN_PCT", "0.20"))
     ENABLE_EQUITY_CURVE_FILTER: bool = os.environ.get("ENABLE_EQUITY_CURVE_FILTER", "True").lower() == "true"
 
-    MAX_TOTAL_OPEN_POSITIONS: int = 1
+    MAX_TOTAL_OPEN_POSITIONS: int = int(os.environ.get("MAX_TOTAL_OPEN_POSITIONS", "3"))
 # NOTE:
 # PositionManager currently supports only ONE open position per symbol.
 # MAX_POSITIONS_PER_SYMBOL must remain 1 until PositionManager is refactored for multi-position per symbol.
