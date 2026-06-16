@@ -67,6 +67,10 @@ class StatusTracker:
         if not Config.ENABLE_SAFE_MODE:
             return
 
+        if symbol not in self.status:
+            logger.warning(f"[{symbol}] increment_error called for unknown symbol — ignoring (WS connection issue)")
+            return
+
         current_time = time.time()
         s = self.status[symbol]
         s.consecutive_errors += 1
