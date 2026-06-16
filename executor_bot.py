@@ -448,6 +448,12 @@ async def market_loop(
                 is_sweep, bullish_sweep_volume, bearish_sweep_volume = cluster_aggregator.is_sweep_detected(symbol, current_price)
                 is_liquidation_data_available = cluster_aggregator.initial_data_ready_event.is_set()
 
+                # Update Prometheus cluster metrics
+                if metrics_exporter_obj:
+                    cluster_vol = sum(c['volume'] for c in cluster_snapshot.get('clusters', []))
+                    metrics_exporter_obj.update_cluster_volume(symbol, cluster_vol)
+                    metrics_exporter_obj.update_active_bins(symbol, len(cluster_snapshot.get('clusters', [])))
+
                 logger.debug(f"[{symbol}] Calling signal_generator.decide with current_price={current_price}, ohlcv_df_empty={df.empty}, is_liquidation_data_available={is_liquidation_data_available}, is_sweep={is_sweep}")
                 signal_data = signal_generators[symbol].decide(
                     symbol=symbol,
