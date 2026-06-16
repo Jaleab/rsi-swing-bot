@@ -450,7 +450,7 @@ async def market_loop(
 
                 # Update Prometheus cluster metrics
                 if metrics_exporter_obj:
-                    cluster_vol = sum(c['volume'] for c in cluster_snapshot.get('clusters', []))
+                    cluster_vol = sum(c.get('volume', 0) for c in cluster_snapshot.get('clusters', []))
                     metrics_exporter_obj.update_cluster_volume(symbol, cluster_vol)
                     metrics_exporter_obj.update_active_bins(symbol, len(cluster_snapshot.get('clusters', [])))
 
