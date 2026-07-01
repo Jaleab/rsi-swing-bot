@@ -106,7 +106,9 @@ async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tra
                     if "data" not in raw_event or raw_event.get("op") == "pong":
                         continue
 
-                    # normalize_bybit_event now returns a LIST of events (v5 format)
+                    d = raw_event.get("data")
+                    logging.info(f"LIQ data type={type(d).__name__} = {str(d)[:150]}")
+
                     for normalized_event in normalize_bybit_event(raw_event):
                         event_id = (normalized_event.order_id, normalized_event.timestamp)
                         if event_id in deduplication_buffer:
