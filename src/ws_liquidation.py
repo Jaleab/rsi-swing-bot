@@ -113,6 +113,7 @@ async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tra
                             continue
                         deduplication_buffer.append(event_id)
                         await queue.put(normalized_event)
+                        logging.info(f"Put liq event: {normalized_event.symbol} {normalized_event.side} qty={normalized_event.qty_usdt:.0f} @ {normalized_event.price}")
                     # print(f"Put event to queue: {normalized_event.symbol} - {normalized_event.qty_usdt} USDT {normalized_event.side} at {normalized_event.price}")
 
         except websockets.exceptions.ConnectionClosedOK:
