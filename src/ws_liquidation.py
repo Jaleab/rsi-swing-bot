@@ -31,15 +31,13 @@ class LiquidationEvent:
         self.side = side
         self.order_id = order_id
 
-def subscribe_message_for_allLiquidation(symbols):
-    """Generates the subscription message for Bybit allLiquidation stream."""
-    # Bybit V5 public websocket for linear perpetuals
-    # Topic: liquidations.{symbol}
-    # Example: {"op":"subscribe","args":["liquidations.BTCUSDT"]}
-    args = [f"liquidations.{s.replace('/', '')}" for s in symbols]
+def subscribe_message_for_allLiquidation():
+    """Generates the subscription message for Bybit v5 liquidation stream.
+    In Bybit v5, liquidation is a single topic (not per-symbol).
+    """
     return json.dumps({
         "op": "subscribe",
-        "args": args
+        "args": ["liquidation"]
     })
 
 def parse_bybit_msg(msg):
@@ -95,7 +93,7 @@ async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tra
         try:
             async with websockets.connect(bybit_url) as ws:
                 logging.info(f"Bybit WebSocket connected. Subscribing to liquidations for {symbols}")
-                await ws.send(subscribe_message_for_allLiquidation(symbols))
+                await ws.send(subscribe_message_for_allLiquidation())
                 reconnect_attempts = 0 # Reset attempts on successful connection
 
                 async for msg in ws:
