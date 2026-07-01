@@ -32,12 +32,11 @@ class LiquidationEvent:
         self.order_id = order_id
 
 def subscribe_message_for_allLiquidation():
-    """Generates the subscription message for Bybit v5 liquidation stream.
-    In Bybit v5, liquidation is a single topic (not per-symbol).
-    """
+    """Subscribe to Bybit v5 liquidation stream.
+    Try known topic names for v5 linear endpoint."""
     return json.dumps({
         "op": "subscribe",
-        "args": ["liquidation"]
+        "args": ["liquidation.SOLUSDT", "liquidation.BTCUSDT", "liquidation.ETHUSDT"]
     })
 
 def parse_bybit_msg(msg):
