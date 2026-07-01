@@ -597,7 +597,6 @@ async def main():
     # 9. Initialize EventStream (only in live mode)
     event_stream: Optional[EventStream] = None
     if not Config.SIM_MODE:
-        event_queue = asyncio.Queue()
         event_stream = EventStream(
             event_queue,
             cluster_aggregator,
