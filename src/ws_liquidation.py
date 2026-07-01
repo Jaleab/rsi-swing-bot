@@ -100,14 +100,17 @@ async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tra
 
                 async for msg in ws:
                     raw_event = parse_bybit_msg(msg)
-                    
-                    # Filter out non-data messages (e.g., subscription confirmations, heartbeats)
-                    if "data" not in raw_event or raw_event.get("op") == "pong":
-                        continue
 
-                    # Handle subscription confirmation
-                    if raw_event.get("op") == "subscribe" and raw_event.get("success") == True:
-                        logging.info(f"Bybit liquidation subscription confirmed: {raw_event}")
+                    # Handle subscription confirmation FIRST (before data filter)
+                    if raw_event.get("op") == "subscribe":
+                        if raw_event.get("success") == True:
+                            logging.info(f"Bybit liquidation subscription confirmed: {raw_event}")
+                        else:
+                            logging.error(f"Bybit liquidation subscription FAILED: {raw_event}")
+                        continue
+                    
+                    # Filter out non-data messages (heartbeats, pings)
+                    if "data" not in raw_event or raw_event.get("op") == "pong":
                         continue
 
                     normalized_event = normalize_bybit_event(raw_event)
