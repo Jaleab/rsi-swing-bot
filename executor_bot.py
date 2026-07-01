@@ -58,7 +58,7 @@ from src.position import Position
 from src.event_stream import EventStream
 from src.events import TradeEvent, OrderBookEvent
 from src.execution.paper_trader import PaperTrader
-from src.analysis.signal_quality_tracker import SignalQualityTracker # New import
+from src.analysis.signal_quality_tracker import SignalQualityTracker
 
 # In-memory order tracker (temporary, will be replaced by persistent storage)
 _in_memory_order_tracker: Dict[str, Dict[str, Any]] = {}
@@ -312,6 +312,94 @@ async def _update_and_manage_position(
     else:
         logger.debug(f"[{symbol}] No open position to manage.")
 
+async def _process_single_event(
+    event, symbol, exchange_client, position_manager, status_tracker,
+    cluster_aggregator, signal_generators, signal_stats_trackers,
+    signal_quality_tracker, metrics_exporter_obj, ohlcv_dataframes,
+    last_ohlcv_update, live_tracker,
+):
+    """Process a single event (or timer tick) for one symbol."""
+    try:
+        s = status_tracker.status.get(symbol)
+        if not s:
+            return
+        if event is not None:
+            await cluster_aggregator.process_event(event)
+        if s.safe_mode_active:
+            if time.time() > s.safe_mode_until:
+                status_tracker.deactivate_safe_mode(symbol)
+            return
+        await _update_and_manage_position(symbol, exchange_client, position_manager, status_tracker,
+            signal_generators.get(symbol, signal_generators[list(signal_generators.keys())[0]]),
+            signal_stats_trackers.get(symbol, signal_stats_trackers[list(signal_stats_trackers.keys())[0]]),
+            signal_quality_tracker, metrics_exporter_obj)
+        current_time = time.time()
+        if (symbol not in last_ohlcv_update or
+            (current_time - last_ohlcv_update.get(symbol, 0)) >= Config.OHLCV_UPDATE_INTERVAL_S):
+            ohlcv_df = await fetch_ohlcv(exchange_client, symbol, Config.TIMEFRAME, status_tracker, limit=Config.OHLCV_LIMIT)
+            if not ohlcv_df.empty:
+                ohlcv_dataframes[symbol] = ohlcv_df
+                ohlcv_dataframes[symbol]['rsi'] = ta.momentum.RSIIndicator(ohlcv_dataframes[symbol]['close'], window=Config.RSI_LENGTH).rsi()
+                ohlcv_dataframes[symbol].dropna(inplace=True)
+            last_ohlcv_update[symbol] = current_time
+        df = ohlcv_dataframes.get(symbol)
+        if df is None or df.empty:
+            return
+        if s.mark_price is None or s.mark_price == Config.DEFAULT_SIM_PRICE:
+            s.mark_price = float(df['close'].iloc[-1])
+            s.last_mark_price_update_ms = int(time.time() * 1000)
+        current_price = s.mark_price
+        if current_price is None:
+            return
+        cluster_snapshot = cluster_aggregator.get_snapshot(symbol)
+        is_sweep, bullish, bearish = cluster_aggregator.is_sweep_detected(symbol, current_price)
+        is_liq_avail = cluster_aggregator.initial_data_ready_event.is_set()
+        if metrics_exporter_obj:
+            vol = sum(c.get('volume', 0) for c in cluster_snapshot.get('clusters', []))
+            metrics_exporter_obj.update_cluster_volume(symbol, vol)
+            metrics_exporter_obj.update_active_bins(symbol, len(cluster_snapshot.get('clusters', [])))
+        signal_data = signal_generators[symbol].decide(
+            symbol=symbol, current_price=current_price, ohlcv_df=df,
+            cluster_snapshot=cluster_snapshot, is_liquidation_data_available=is_liq_avail,
+            is_sweep=is_sweep, bullish_sweep_volume=bullish, bearish_sweep_volume=bearish,
+        )
+        signal_type = signal_data.get('signal_type', 'NEUTRAL')
+        confidence = signal_data.get('confidence_score', 0.0)
+        if signal_type != "NEUTRAL":
+            logger.info(f"[{symbol}] Signal: {signal_type} confidence={confidence:.3f}")
+            if metrics_exporter_obj:
+                metrics_exporter_obj.update_last_signal_direction(symbol, 1 if 'LONG' in signal_type else -1)
+                metrics_exporter_obj.update_last_signal_confidence(symbol, confidence)
+            s.last_signal_timestamp = time.time()
+            status_tracker.update_status(symbol, last_signal_type=signal_type, last_signal_confidence=confidence,
+                                         last_signal_reason=signal_data.get('reason', ''))
+            if not position_manager.has_open_position(symbol):
+                guard_results = signal_generators[symbol].check_guardrails(
+                    symbol, signal_type, confidence, current_price, cluster_snapshot, df)
+                if all(gr.allowed for gr in guard_results):
+                    is_long = 'LONG' in signal_type
+                    await position_manager.open_position(
+                        symbol=symbol, signal_direction='buy' if is_long else 'sell',
+                        current_price=s.mark_price, exchange_client=exchange_client,
+                        order_type='market', signal_stats_tracker=signal_stats_trackers[symbol],
+                        cluster_snapshot=cluster_snapshot,
+                    )
+        if live_tracker:
+            live_tracker[symbol].update({
+                "price": s.mark_price,
+                "rsi": df['rsi'].iloc[-1] if not df.empty and 'rsi' in df.columns else 0.0,
+                "pnl": position_manager.get_open_position(symbol).unrealized_pnl if position_manager.has_open_position(symbol) else 0.0,
+                "events": s.events_count,
+                "status": s.status,
+                "signal": s.last_signal_type,
+                "confidence": s.last_signal_confidence,
+                "reason": s.last_signal_reason,
+            })
+    except Exception as e:
+        logger.error(f"[{symbol}] _process_single_event error: {e}", exc_info=True)
+        status_tracker.increment_error(symbol)
+
+
 async def market_loop(
     exchange_client: AbstractExchangeClient,
     position_manager: PositionManager,
@@ -336,298 +424,46 @@ async def market_loop(
     ohlcv_dataframes: Dict[str, pd.DataFrame] = {}
     last_ohlcv_update: Dict[str, float] = {}
 
-    # Event processing loop
-    if sim_events: # Simulation mode
-        events_iterator = iter(sim_events)
-        # In deterministic simulation, initial OHLCV is fetched by SimEventsGenerator
-        # and included in the sim_events list. No need for separate initial fetch here.
-    elif event_stream: # Live mode
-        # Initial fetch of OHLCV data for all symbols for live mode
+    # Initial OHLCV fetch for live mode
+    if event_stream:  # Live mode
         for symbol in Config.SYMBOLS:
             ohlcv_dataframes[symbol] = await fetch_ohlcv(exchange_client, symbol, Config.TIMEFRAME, status_tracker, limit=Config.OHLCV_LIMIT)
-            logger.debug(f"[{symbol}] Initial OHLCV data fetched. DataFrame empty: {ohlcv_dataframes[symbol].empty}")
-            if ohlcv_dataframes[symbol].empty:
-                logger.warning(f"[{symbol}] Initial OHLCV data fetch failed. Signal generation might be affected.")
-            else:
-                # Calculate RSI for the initial OHLCV data
+            if not ohlcv_dataframes[symbol].empty:
                 ohlcv_dataframes[symbol]['rsi'] = ta.momentum.RSIIndicator(ohlcv_dataframes[symbol]['close'], window=Config.RSI_LENGTH).rsi()
                 ohlcv_dataframes[symbol].dropna(inplace=True)
-                logger.debug(f"[{symbol}] Initial RSI calculated. DataFrame empty after dropna: {ohlcv_dataframes[symbol].empty}")
-                if ohlcv_dataframes[symbol].empty:
-                    logger.warning(f"[{symbol}] Initial RSI calculation resulted in empty DataFrame. Signal generation might be affected.")
-                logger.debug(f"[{symbol}] Initial OHLCV DataFrame (first 5 rows):\n{ohlcv_dataframes[symbol].head().to_string()}")
-        events_iterator = event_stream.get_latest_events()
-    else:
-        raise ValueError("Either event_stream or sim_events must be provided.")
+            last_ohlcv_update[symbol] = time.time()
 
-    # Mark initial data as populated for SimpleMonitor (only if live_tracker is provided)
+    # Mark initial data as populated for SimpleMonitor
     if live_tracker:
         live_tracker["initial_data_populated"] = True
-        logger.debug("Initial OHLCV data populated for all symbols. Setting live_tracker['initial_data_populated'] = True")
 
-    try: # Outer try for the async for loop
-        async for event in events_iterator:
-            symbol = event.symbol # Define symbol here so it's available for error logging
-            logger.debug(f"Received event in market loop: {type(event).__name__} for {symbol}")
-            try: # Inner try for event processing
-                s = status_tracker.status[symbol]
-                current_time_ms = event.timestamp
-                
-                # Process the event with the cluster aggregator
-                await cluster_aggregator.process_event(event)
-
-                # Check if safe mode is active for this symbol
-                if s.safe_mode_active:
-                    logger.warning(f"[{symbol}] Safe mode is active. Skipping event processing.")
-                    # Check if safe mode duration has passed to potentially deactivate
-                    if time.time() > s.safe_mode_until:
-                        status_tracker.deactivate_safe_mode(symbol)
-                    continue
-
-                # Update mark price based on the latest event
-                # Use event.timestamp for current_time_ms in simulation for consistency
-                if isinstance(event, TradeEvent):
-                    s.mark_price = event.price
-                    s.last_mark_price_update_ms = current_time_ms
-                    logger.debug(f"[{symbol}] Mark price updated from TradeEvent: {s.mark_price}")
-                elif isinstance(event, OrderBookEvent):
-                    s.mark_price = event.mid_price
-                    s.last_mark_price_update_ms = current_time_ms
-                    logger.debug(f"[{symbol}] Mark price updated from OrderBookEvent: {s.mark_price}")
-                elif isinstance(event, LiquidationEvent):
-                    # For liquidation events, we might not want to directly update mark_price
-                    # as it represents a momentary price spike during liquidation.
-                    # However, for consistency in signal generation, we'll use it if no other price is available.
-                    if s.mark_price is None:
-                        s.mark_price = event.price
-                        s.last_mark_price_update_ms = current_time_ms
-                        logger.debug(f"[{symbol}] Mark price updated from LiquidationEvent (fallback): {s.mark_price}")
-
-                # --- Step 1: Update and Manage Existing Positions ---
-                # In simulation, this will trigger PaperTrader logic
-                await _update_and_manage_position(symbol, exchange_client, position_manager, status_tracker, signal_generators[symbol], signal_stats_trackers[symbol], signal_quality_tracker, metrics_exporter_obj)
-
-                # --- Step 2: Fetch/Update OHLCV data (throttled) ---
-                latest_ohlcv_df = pd.DataFrame()
-                current_time = time.time()
-                if (symbol not in last_ohlcv_update or
-                    (current_time - last_ohlcv_update.get(symbol, 0)) >= Config.OHLCV_UPDATE_INTERVAL_S):
-                    latest_ohlcv_df = await fetch_ohlcv(exchange_client, symbol, Config.TIMEFRAME, status_tracker, limit=Config.OHLCV_LIMIT)
-                    if not latest_ohlcv_df.empty:
-                        ohlcv_dataframes[symbol] = latest_ohlcv_df
-                        ohlcv_dataframes[symbol]['rsi'] = ta.momentum.RSIIndicator(ohlcv_dataframes[symbol]['close'], window=Config.RSI_LENGTH).rsi()
-                        ohlcv_dataframes[symbol].dropna(inplace=True)
-                        logger.debug(f"[{symbol}] OHLCV updated and RSI recalculated. Empty: {ohlcv_dataframes[symbol].empty}")
-                        if ohlcv_dataframes[symbol].empty:
-                            logger.warning(f"[{symbol}] RSI calc resulted in empty DataFrame.")
-                    last_ohlcv_update[symbol] = current_time
-                df = ohlcv_dataframes.get(symbol)
-                # Update mark price from OHLCV close if stale
-                if df is not None and not df.empty:
-                    ohlcv_close = df['close'].iloc[-1]
-                    if s.mark_price is None or s.mark_price == Config.DEFAULT_SIM_PRICE:
-                        s.mark_price = float(ohlcv_close)
+    # Market loop: event-driven for sim, timer-driven for live
+    try:
+        if sim_events:
+            for event in sim_events:
+                symbol = event.symbol
+                await _process_single_event(event, symbol, exchange_client, position_manager,
+                    status_tracker, cluster_aggregator, signal_generators, signal_stats_trackers,
+                    signal_quality_tracker, metrics_exporter_obj, ohlcv_dataframes, last_ohlcv_update, live_tracker)
+                await asyncio.sleep(Config.MARKET_LOOP_DELAY)
+        elif event_stream:
+            logger.info("Market loop entering timer-driven mode (5s interval)...")
+            while True:
+                for symbol in Config.SYMBOLS:
+                    s = status_tracker.status.get(symbol)
+                    if not s:
+                        continue
+                    mid = cluster_aggregator.get_orderbook_mid_price(symbol)
+                    if mid and mid > 0:
+                        s.mark_price = mid
                         s.last_mark_price_update_ms = int(time.time() * 1000)
-                # Added debug logs for OHLCV DataFrame and current price before signal generation
-                logger.debug(f"[{symbol}] OHLCV DataFrame before signal generation (first 5 rows):\n{df.head().to_string() if df is not None else 'None'}")
-                logger.debug(f"[{symbol}] Current mark price before signal generation: {s.mark_price}")
-
-                if df is None or df.empty:
-                    logger.warning(f"[{symbol}] OHLCV data not available for signal generation. Skipping signal generation.")
-                    status_tracker.increment_error(symbol) # Consider this an error if OHLCV is crucial
-                    continue
-
-                # --- Step 3: Generate Signal ---
-                current_price = s.mark_price
-                if current_price is None:
-                    logger.warning(f"[{symbol}] Current mark price is None. Skipping signal generation.")
-                    status_tracker.increment_error(symbol) # Consider this an error
-                    continue
-
-                cluster_snapshot = cluster_aggregator.get_snapshot(symbol)
-                is_sweep, bullish_sweep_volume, bearish_sweep_volume = cluster_aggregator.is_sweep_detected(symbol, current_price)
-                is_liquidation_data_available = cluster_aggregator.initial_data_ready_event.is_set()
-
-                # Update Prometheus cluster metrics
-                if metrics_exporter_obj:
-                    cluster_vol = sum(c.get('volume', 0) for c in cluster_snapshot.get('clusters', []))
-                    metrics_exporter_obj.update_cluster_volume(symbol, cluster_vol)
-                    metrics_exporter_obj.update_active_bins(symbol, len(cluster_snapshot.get('clusters', [])))
-
-                logger.debug(f"[{symbol}] Calling signal_generator.decide with current_price={current_price}, ohlcv_df_empty={df.empty}, is_liquidation_data_available={is_liquidation_data_available}, is_sweep={is_sweep}")
-                signal_data = signal_generators[symbol].decide(
-                    symbol=symbol,
-                    current_price=current_price,
-                    ohlcv_df=df,
-                    cluster_snapshot=cluster_snapshot,
-                    is_liquidation_data_available=is_liquidation_data_available,
-                    is_sweep=is_sweep,
-                    bullish_sweep_volume=bullish_sweep_volume,
-                    bearish_sweep_volume=bearish_sweep_volume
-                )
-
-                signal_type = signal_data.get('signal_type')
-                confidence_score = signal_data.get('confidence_score', 0.0)
-                
-                logger.info(f"[{symbol}] Raw signal_data: {signal_data}")
-                if signal_type != "NEUTRAL":
-                    logger.info(f"[{symbol}] Signal generated: {signal_type} with confidence {confidence_score:.2f}. Reason: {signal_data.get('reason')}")
-                    if metrics_exporter_obj:
-                        metrics_exporter_obj.update_last_signal_direction(symbol, 1 if "LONG" in signal_type else (-1 if "SHORT" in signal_type else 0))
-                        metrics_exporter_obj.update_last_signal_confidence(symbol, confidence_score)
-                        metrics_exporter_obj.update_last_cluster_impact_score(symbol, signal_data.get('cluster_impact_score', 0))
-                    status_tracker.update_status(
-                        symbol=symbol,
-                        last_signal_type=signal_type,
-                        last_signal_confidence=confidence_score,
-                        last_signal_reason=signal_data.get('reason'),
-                        cluster_impact_score=signal_data.get('cluster_impact_score', 0)
-                    )
-                    
-                    # Record signal quality data if in SIM_MODE
-                    if Config.SIM_MODE and signal_quality_tracker:
-                        signal_quality_tracker.record_signal({
-                            "timestamp": current_time_ms,
-                            "symbol": symbol,
-                            "signal_type": signal_type,
-                            "confidence_score": confidence_score,
-                            "reason": signal_data.get('reason'),
-                            "current_price": current_price,
-                            "rsi_value": s.rsi_value, # Assuming rsi_value is stored in status
-                            "cluster_impact_score": signal_data.get('cluster_impact_score', 0),
-                            "top_cluster_price": s.top_cluster_price, # Assuming this is stored in status
-                            "top_cluster_strength": s.top_cluster_strength, # Assuming this is stored in status
-                            "imbalance_ratio": s.imbalance_ratio, # Assuming this is stored in status
-                            "orderbook_imbalance": s.orderbook_imbalance, # Assuming this is stored in status
-                            "trade_imbalance": s.trade_imbalance, # Assuming this is stored in status
-                            "sweep_detected": s.sweep_detected # Assuming this is stored in status
-                        })
-                        logger.debug(f"Recorded signal: {signal_type} for {symbol}")
-
-                    # Update last signal timestamp regardless of whether a position is opened
-                    s.last_signal_timestamp = current_time_ms / 1000
-
-                    # --- Guardrail Checks for Signal Processing ---
-                    decision_meta = {
-                        "decision": "EXECUTED",
-                        "block_guard": None,
-                        "block_reason": None,
-                        "cooldown_active": False,
-                        "safe_mode_active": status_tracker.status[symbol].safe_mode_active,
-                    }
-
-                    if status_tracker.status[symbol].safe_mode_active:
-                        guard_result = GuardResult(allowed=False, reason="Safe mode is active.", guard_name="SAFE_MODE")
-                        status_tracker.update_guard_metrics(symbol, guard_result)
-                        status_tracker.update_status(symbol, notes=f"SKIPPED_TRADE ({guard_result.guard_name})")
-                        decision_meta.update({
-                            "decision": "BLOCKED",
-                            "block_guard": guard_result.guard_name,
-                            "block_reason": guard_result.reason,
-                        })
-                    elif not position_manager.has_open_position(symbol):
-                        # Check for signal cooldown
-                        if (current_time_ms / 1000 - s.last_signal_timestamp < Config.SIGNAL_COOLDOWN_SECONDS) and (s.last_signal_type == signal_type):
-                            guard_result = GuardResult(
-                                allowed=False,
-                                reason=f"Signal '{signal_type}' ignored due to cooldown.",
-                                guard_name="SIGNAL_COOLDOWN",
-                                details=f"Last signal of same type was {current_time_ms / 1000 - s.last_signal_timestamp:.2f}s ago (min {Config.SIGNAL_COOLDOWN_SECONDS}s)."
-                            )
-                            status_tracker.update_guard_metrics(symbol, guard_result)
-                            status_tracker.update_status(symbol, notes=f"SKIPPED_TRADE ({guard_result.guard_name})")
-                            decision_meta.update({
-                                "decision": "BLOCKED",
-                                "block_guard": guard_result.guard_name,
-                                "block_reason": guard_result.reason,
-                                "cooldown_active": True,
-                            })
-                        else:
-                            # Evaluate guardrails via signal_generator.check_guardrails()
-                            guard_results = signal_generators[symbol].check_guardrails(
-                                symbol, signal_type, confidence_score,
-                                s.mark_price, cluster_snapshot, ohlcv_dataframes.get(symbol, pd.DataFrame())
-                            )
-
-                            allowed_by_guardrails = all(gr.allowed for gr in guard_results)
-
-                            for gr in guard_results:
-                                status_tracker.update_guard_metrics(symbol, gr)
-                                if not gr.allowed:
-                                    logger.warning(f"[{symbol}] Trade for signal {signal_type} blocked by guardrail: {gr.guard_name}. Reason: {gr.reason}")
-                                    status_tracker.update_status(symbol, notes=f"BLOCKED_TRADE ({gr.guard_name})")
-                                    decision_meta.update({
-                                        "decision": "BLOCKED",
-                                        "block_guard": gr.guard_name,
-                                        "block_reason": gr.reason,
-                                    })
-                                    break
-
-                            if allowed_by_guardrails:
-                                logger.info(f"[{symbol}] Signal {signal_type} allowed by all guardrails.")
-                                status_tracker.update_status(symbol, notes="TRADE_ALLOWED")
-
-                                # Determine signal direction
-                                is_long = 'LONG' in signal_type and signal_type != 'NEUTRAL'
-                                is_short = 'SHORT' in signal_type and signal_type != 'NEUTRAL'
-                                signal_direction = 'buy' if is_long else 'sell'
-
-                                # Route through PositionManager.open_position() for proper SL/TP + guard enforcement
-                                await position_manager.open_position(
-                                    symbol=symbol,
-                                    signal_direction=signal_direction,
-                                    current_price=s.mark_price,
-                                    exchange_client=exchange_client,
-                                    order_type='market',
-                                    signal_stats_tracker=signal_stats_trackers[symbol],
-                                    cluster_snapshot=cluster_snapshot
-                                )
-                    else:
-                        logger.info(f"[{symbol}] Already has an open position. Skipping new {signal_type} signal.")
-                        status_tracker.update_status(symbol, notes="POSITION_EXISTS")
-                        decision_meta.update({
-                            "decision": "BLOCKED",
-                            "block_guard": "POSITION_EXISTS",
-                            "block_reason": "Already has an open position",
-                        })
-
-                    # Record signal and decision in SIM_MODE
-                    if Config.SIM_MODE and signal_quality_tracker:
-                        signal_quality_tracker.record_signal(signal_data, decision_meta)
-
-                # Update live_tracker for SimpleMonitor (if provided)
-                if live_tracker:
-                    live_tracker[symbol].update({
-                        "price": s.mark_price,
-                        "rsi": df['rsi'].iloc[-1] if not df.empty and 'rsi' in df.columns else 0.0,
-                        "pnl": position_manager.get_open_position(symbol).unrealized_pnl if position_manager.has_open_position(symbol) else 0.0,
-                        "events": s.events_count,
-                        "cluster_vol": sum(c['volume'] for c in cluster_snapshot.get('clusters', [])),
-                        "active_bins": len(cluster_snapshot.get('clusters', [])),
-                        "status": s.status,
-                        "notes": s.notes,
-                        "signal": s.last_signal_type,
-                        "confidence": s.last_signal_confidence,
-                        "reason": s.last_signal_reason,
-                        "guard_triggered_count": s.guard_metrics.trades_blocked_count,
-                        "guard_trades_blocked_count": s.guard_metrics.trades_blocked_count,
-                        "guard_last_reason": s.guard_metrics.last_guard_reason
-                    })
-
-            except asyncio.CancelledError:
-                logger.info(f"[{symbol}] Event processing cancelled.")
-                raise
-            except (ValueError, KeyError, TypeError) as e:
-                logger.error(f"[{symbol}] Data error processing event: {e}", exc_info=True)
-                status_tracker.increment_error(symbol)
-            except Exception as e:
-                logger.exception(f"[{symbol}] Unexpected error: {e}")
-                status_tracker.increment_error(symbol)
-                status_tracker.update_status(symbol, notes=f"ERROR: {str(e)}")
-            
-            # Yield control to the event loop to prevent blocking
-            await asyncio.sleep(Config.MARKET_LOOP_DELAY)
-
+                    await _process_single_event(None, symbol, exchange_client, position_manager,
+                        status_tracker, cluster_aggregator, signal_generators, signal_stats_trackers,
+                        signal_quality_tracker, metrics_exporter_obj, ohlcv_dataframes, last_ohlcv_update, live_tracker)
+                await asyncio.sleep(Config.MARKET_LOOP_INTERVAL)
+        else:
+            raise ValueError("Either event_stream or sim_events must be provided.")
+    
     except asyncio.CancelledError:
         logger.info("Market loop cancelled.")
     except Exception as e:
