@@ -18,6 +18,11 @@ services:
     volumes:
       - ./data:/app/data  # Persistent data (trade logs, cluster state)
     restart: unless-stopped  # Auto-restart on crash or host reboot
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   prometheus:
     image: prom/prometheus:latest

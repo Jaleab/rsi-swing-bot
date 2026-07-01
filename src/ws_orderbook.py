@@ -8,12 +8,10 @@ from sortedcontainers import SortedDict # Using sortedcontainers for efficient o
 from typing import Dict, Any, List, Tuple, Literal
 
 from src.config import Config
-from src.events import OrderBookEvent # Import OrderBookEvent from new events module
+from src.events import OrderBookEvent
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO) # Set logger level back to INFO
+logger.setLevel(logging.WARNING)  # Only log errors, not every delta
 
 # Removed local OrderBookEvent class definition, now imported from src.events
 
