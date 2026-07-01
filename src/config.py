@@ -134,7 +134,7 @@ class Config:
 
     # --- Bot Operation Intervals ---
     MARKET_LOOP_INTERVAL: int = 5    # Interval for the market loop in seconds
-    MARKET_LOOP_DELAY: float = 0.1   # Seconds to yield between event loop iterations
+    MARKET_LOOP_DELAY: float = float(os.environ.get("MARKET_LOOP_DELAY", "0.001"))   # Near-zero delay to clear queue
     OHLCV_LIMIT: int = 200           # Number of OHLCV candles to fetch
     QUEUE_LOG_INTERVAL: int = 60     # Interval for logging queue sizes in seconds
     OHLCV_UPDATE_INTERVAL_S: int = 60 # Min seconds between OHLCV refreshes (should match TIMEFRAME)
