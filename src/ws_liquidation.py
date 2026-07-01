@@ -106,17 +106,19 @@ async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tra
                     if "data" not in raw_event or raw_event.get("op") == "pong":
                         continue
 
-                    d = raw_event.get("data")
-                    logging.info(f"LIQ data type={type(d).__name__} = {str(d)[:150]}")
-
-                    for normalized_event in normalize_bybit_event(raw_event):
-                        event_id = (normalized_event.order_id, normalized_event.timestamp)
-                        if event_id in deduplication_buffer:
-                            continue
-                        deduplication_buffer.append(event_id)
-                        await queue.put(normalized_event)
-                        logging.info(f"Put liq event: {normalized_event.symbol} {normalized_event.side} qty={normalized_event.qty_usdt:.0f} @ {normalized_event.price}")
-                    # print(f"Put event to queue: {normalized_event.symbol} - {normalized_event.qty_usdt} USDT {normalized_event.side} at {normalized_event.price}")
+                    logging.info(f"LIQ msg with data: topic={raw_event.get('topic', '?')}")
+                    try:
+                        events = normalize_bybit_event(raw_event)
+                        logging.info(f"  → {len(events)} events parsed")
+                        for normalized_event in events:
+                            event_id = (normalized_event.order_id, normalized_event.timestamp)
+                            if event_id in deduplication_buffer:
+                                continue
+                            deduplication_buffer.append(event_id)
+                            await queue.put(normalized_event)
+                            logging.info(f"Put liq event: {normalized_event.symbol} {normalized_event.side} qty={normalized_event.qty_usdt:.0f} @ {normalized_event.price}")
+                    except Exception as e:
+                        logging.error(f"LIQ normalize error: {e}", exc_info=True)
 
         except websockets.exceptions.ConnectionClosedOK:
             logging.warning("Bybit WebSocket connection closed gracefully. Reconnecting...")
