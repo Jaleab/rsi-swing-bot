@@ -36,12 +36,15 @@ def test_parse_bybit_msg():
     assert parsed["data"]["s"] == "SOLUSDT"
 
 def test_normalize_bybit_event():
-    event_data = {"topic": "liquidations.SOLUSDT", "data": {"symbol": "SOLUSDT", "price": "100.0", "qty": "1.0", "side": "Buy", "time": 1678886400000, "orderId": "order1"}}
-    normalized = normalize_bybit_event(event_data)
-    assert normalized is not None
-    assert normalized.exchange == "bybit"
-    assert normalized.symbol == "SOL/USDT"
-    assert normalized.side == "LONG"
+    # v5 format: data is an ARRAY of events with different field names
+    event_data = {"topic": "allLiquidation.SOLUSDT", "data": [{"T": 1678886400000, "s": "SOLUSDT", "S": "Buy", "v": "1.0", "p": "100.0"}]}
+    events = normalize_bybit_event(event_data)
+    assert len(events) == 1
+    assert events[0].exchange == "bybit"
+    assert events[0].symbol == "SOL/USDT"
+    assert events[0].side == "LONG"
+    assert events[0].price == 100.0
+    assert events[0].qty == 1.0
 
 def test_normalize_binance_event():
     event_data = {"e": "forceOrder", "o": {"s": "SOLUSDT", "ap": "100.1", "q": "1.1", "S": "SELL", "E": 1678886401000, "i": "order_binance1"}}

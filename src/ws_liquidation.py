@@ -31,12 +31,14 @@ class LiquidationEvent:
         self.side = side
         self.order_id = order_id
 
-def subscribe_message_for_allLiquidation():
-    """Subscribe to Bybit v5 liquidation stream.
-    Try known topic names for v5 linear endpoint."""
+def subscribe_message_for_allLiquidation(symbols):
+    """Generates the subscription message for Bybit v5 allLiquidation stream.
+    Topic: allLiquidation.{symbol} (per-symbol in v5)
+    """
+    args = [f"allLiquidation.{s.replace('/', '')}" for s in symbols]
     return json.dumps({
         "op": "subscribe",
-        "args": ["liquidation.SOLUSDT", "liquidation.BTCUSDT", "liquidation.ETHUSDT"]
+        "args": args
     })
 
 def parse_bybit_msg(msg):
@@ -44,39 +46,33 @@ def parse_bybit_msg(msg):
     return json.loads(msg)
 
 def normalize_bybit_event(raw_event):
-    """Normalizes a raw Bybit liquidation event to the LiquidationEvent schema."""
-    # Example raw event structure (simplified):
-    # {
-    #     "topic": "liquidations.BTCUSDT",
-    #     "data": {
-    #         "symbol": "BTCUSDT",
-    #         "side": "Buy", # "Buy" for long liquidations, "Sell" for short liquidations
-    #         "price": "20000.0",
-    #         "qty": "0.01",
-    #         "time": 1678886400000,
-    #         "orderId": "..."
-    #     }
-    # }
-    data = raw_event.get("data", {})
-    symbol = data.get("symbol", "").replace('USDT', '/USDT') # Convert BTCUSDT to BTC/USDT
-    side = "LONG" if data.get("side") == "Buy" else "SHORT" # Bybit 'Buy' means long was liquidated
-    price = float(data.get("price", 0))
-    qty = float(data.get("qty", 0))
-    timestamp = data.get("time", 0) # Milliseconds
-    order_id = data.get("orderId")
-
-    qty_usdt = price * qty
-
-    return LiquidationEvent(
-        exchange="bybit",
-        symbol=symbol,
-        timestamp=timestamp,
-        price=price,
-        qty=qty,
-        qty_usdt=qty_usdt,
-        side=side,
-        order_id=order_id
-    )
+    """Normalizes a raw Bybit v5 liquidation event to the LiquidationEvent schema.
+    v5 format: data is an ARRAY of {'T': ts, 's': symbol, 'S': side, 'v': qty, 'p': price}
+    """
+    events = []
+    data_list = raw_event.get("data", [])
+    if not isinstance(data_list, list):
+        return events
+    
+    for item in data_list:
+        symbol = item.get("s", "").replace('USDT', '/USDT')
+        side = "LONG" if item.get("S") == "Buy" else "SHORT"  # Buy = long liquidated
+        price = float(item.get("p", 0))
+        qty = float(item.get("v", 0))
+        timestamp = item.get("T", 0)
+        qty_usdt = price * qty
+        
+        events.append(LiquidationEvent(
+            exchange="bybit",
+            symbol=symbol,
+            timestamp=timestamp,
+            price=price,
+            qty=qty,
+            qty_usdt=qty_usdt,
+            side=side,
+            order_id=f"{symbol}_{timestamp}_{side}"
+        ))
+    return events
 
 async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tracker):
     bybit_url = Config.BYBIT_WS_URL
@@ -92,8 +88,8 @@ async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tra
         try:
             async with websockets.connect(bybit_url) as ws:
                 logging.info(f"Bybit WebSocket connected. Subscribing to liquidations for {symbols}")
-                await ws.send(subscribe_message_for_allLiquidation())
-                reconnect_attempts = 0 # Reset attempts on successful connection
+                await ws.send(subscribe_message_for_allLiquidation(symbols))
+                reconnect_attempts = 0
 
                 async for msg in ws:
                     raw_event = parse_bybit_msg(msg)
@@ -110,16 +106,13 @@ async def bybit_ws_consumer(queue: asyncio.Queue, symbols: List[str], status_tra
                     if "data" not in raw_event or raw_event.get("op") == "pong":
                         continue
 
-                    normalized_event = normalize_bybit_event(raw_event)
-
-                    # Simple deduplication based on order_id and timestamp
-                    event_id = (normalized_event.order_id, normalized_event.timestamp)
-                    if event_id in deduplication_buffer:
-                        print(f"Duplicate event skipped: {event_id}")
-                        continue
-                    deduplication_buffer.append(event_id)
-
-                    await queue.put(normalized_event)
+                    # normalize_bybit_event now returns a LIST of events (v5 format)
+                    for normalized_event in normalize_bybit_event(raw_event):
+                        event_id = (normalized_event.order_id, normalized_event.timestamp)
+                        if event_id in deduplication_buffer:
+                            continue
+                        deduplication_buffer.append(event_id)
+                        await queue.put(normalized_event)
                     # print(f"Put event to queue: {normalized_event.symbol} - {normalized_event.qty_usdt} USDT {normalized_event.side} at {normalized_event.price}")
 
         except websockets.exceptions.ConnectionClosedOK:
