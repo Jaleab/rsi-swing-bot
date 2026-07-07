@@ -22,11 +22,10 @@ from src.guards import GuardResult # Added for guardrail enforcement
 
 # Configure logging at the very beginning of the file
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
     handlers=[
-        logging.StreamHandler(), # Console output
-        logging.FileHandler('bot_output.log', mode='a') # File output
+        logging.StreamHandler(), # Console output only
     ]
 )
 logger = logging.getLogger(__name__)
