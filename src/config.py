@@ -43,13 +43,13 @@ class Config:
     RISK_PER_TRADE_PERCENT: float = 0.005 # Risk per trade as a percentage of account balance
 
     # RSI Parameters (aligned with Pine Script prototype and industry standard)
-    RSI_LENGTH: int = int(os.environ.get("RSI_LENGTH", "14"))
-    RSI_OVERSOLD: int = int(os.environ.get("RSI_OVERSOLD", "30"))
-    RSI_OVERBOUGHT: int = int(os.environ.get("RSI_OVERBOUGHT", "70"))
+    RSI_LENGTH: int = int(os.environ.get("RSI_LENGTH", "7"))
+    RSI_OVERSOLD: int = int(os.environ.get("RSI_OVERSOLD", "35"))
+    RSI_OVERBOUGHT: int = int(os.environ.get("RSI_OVERBOUGHT", "65"))
     ENABLE_RSI_EXIT: bool = os.environ.get("ENABLE_RSI_EXIT", "True").lower() == "true"
 
     # --- Regime Detection ---
-    ENABLE_REGIME_FILTER: bool = True
+    ENABLE_REGIME_FILTER: bool = os.environ.get("ENABLE_REGIME_FILTER", "False").lower() == "true"
     ADX_LENGTH: int = 14
     ADX_THRESHOLD: int = 25       # Below 25 = ranging (good for RSI), above 25 = trending
     REGIME_FILTER_MODE: str = "RANGING_ONLY"  # "RANGING_ONLY" or "ALL"

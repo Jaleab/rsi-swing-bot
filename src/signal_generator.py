@@ -295,8 +295,8 @@ class SignalGenerator:
         """Validates a signal against guardrail checks. Returns GuardResult list."""
         guard_results = [
             GuardResult(
-                allowed=confidence_score >= 0.15,
-                reason="Confidence above minimum" if confidence_score >= 0.15 else f"Confidence {confidence_score:.2f} below minimum 0.15",
+                allowed=confidence_score >= 0.10,
+                reason="Confidence above minimum" if confidence_score >= 0.10 else f"Confidence {confidence_score:.2f} below minimum 0.10",
                 guard_name="MIN_CONFIDENCE",
                 details=f"Symbol: {symbol}, Confidence: {confidence_score:.2f}"
             ),
